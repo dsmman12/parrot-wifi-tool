@@ -3,7 +3,7 @@ import csv
 import io
 import re
 
-VERSION = '0.4.4'
+VERSION = '0.4.5'
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 
 def clean(text):
@@ -259,3 +259,36 @@ def handshake_announced(text, bssid):
         if target in (value.lower() for value in matches):
             return True
     return False
+
+
+def capture_name(value):
+    value = str(value).strip()
+    if value.lower().endswith('.cap'):
+        value = value[:-4]
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 _.-]{0,79}', value):
+        raise ValueError('Choose a capture name starting with a letter or number (up to 80 characters). Use letters, numbers, spaces, dots, - or _.')
+    return value
+
+def save_capture_session(source, folder, name):
+    from pathlib import Path
+    import shutil
+    name = capture_name(name)
+    destination = Path(folder).expanduser() / name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.mkdir()  # Never overwrite an existing capture.
+    captures = []
+    try:
+        for path in sorted(Path(source).iterdir()):
+            if not path.is_file() or path.is_symlink():
+                continue
+            target = path.name
+            if path.suffix.lower() in ('.cap', '.pcap', '.pcapng'):
+                suffix = '' if not captures else '-' + str(len(captures) + 1)
+                target = name + suffix + path.suffix
+                captures.append(destination / target)
+            shutil.copy2(path, destination / target)
+    except Exception:
+        # Remove only files created by this export; originals remain intact.
+        shutil.rmtree(destination)
+        raise
+    return destination, captures

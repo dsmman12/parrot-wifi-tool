@@ -16,7 +16,7 @@ from tkinter import ttk, messagebox, filedialog
 from tkinter.scrolledtext import ScrolledText
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from core import VERSION, clean, handshake_status, interfaces, mac, number
+from core import VERSION, clean, handshake_status, interfaces, mac, number, capture_name, save_capture_session
 
 # Desktop launchers on Debian/Parrot may omit sbin from the user's PATH.
 # Use distribution tool locations consistently with the privileged worker.
@@ -52,6 +52,8 @@ class App(tk.Tk):
         self.wps_notice = tk.StringVar(value="Select a network to see WPS options.")
         self.last_session = None
         self.last_caps = []
+        self.capture_name = tk.StringVar(value=time.strftime('capture-%Y%m%d-%H%M%S'))
+        self.saved_notice = tk.StringVar(value='Captures save automatically to the folder and name below when capture ends.')
         self.handshake_found = False
         self.capture_notice = tk.StringVar(value='Select your router, then start its client scan and capture.')
         self.pending_close = False
@@ -153,6 +155,11 @@ class App(tk.Tk):
         ttk.Spinbox(row,from_=1,to=5,textvariable=self.count,width=4).pack(side='left')
         row = ttk.Frame(target_capture)
         row.pack(fill='x', pady=6)
+        ttk.Label(target_capture, textvariable=self.saved_notice, wraplength=950).pack(anchor='w', pady=4)
+        name_row = ttk.Frame(target_capture)
+        name_row.pack(fill='x')
+        ttk.Label(name_row, text='Capture name').pack(side='left')
+        ttk.Entry(name_row, textvariable=self.capture_name, width=35).pack(side='left', padx=8)
         ttk.Entry(row, textvariable=self.export_folder).pack(side='left', fill='x', expand=True)
         ttk.Button(row, text='Choose save folder…', command=self.choose_folder).pack(side='left', padx=5)
         ttk.Button(row, text='Save latest session', command=self.export_session).pack(side='left')
@@ -346,6 +353,12 @@ class App(tk.Tk):
                     return
                 self.authorized.set(True)
             data['authorized'] = True
+            data['_capture_name'] = capture_name(self.capture_name.get())
+            folder = Path(self.export_folder.get()).expanduser()
+            folder.mkdir(parents=True, exist_ok=True)
+            if (folder / data['_capture_name']).exists():
+                raise ValueError('That capture name already exists in the save folder. Choose a new name.')
+            data['_save_folder'] = str(folder)
             data['seconds'] = number(self.seconds.get(), 5, 3600)
             data['interface'] = self.adapter.get()
             if self.pending_close:
@@ -360,7 +373,7 @@ class App(tk.Tk):
             self.pending_capture = None
             if not self.start('capture', data):
                 self.capture_notice.set('Client scan did not start. Check the message and operation log below.')
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             self.capture_notice.set('Client scan did not start: ' + str(exc))
             messagebox.showerror('Capture', str(exc))
 
@@ -613,7 +626,7 @@ class App(tk.Tk):
                             self.capture_notice.set(f"Capture active · {len(event['items'])} associated clients seen. Waiting for client traffic / a handshake.")
                     elif event_type == 'handshake':
                         self.handshake_found = True
-                        self.capture_notice.set('HANDSHAKE CAPTURED for ' + event['bssid'] + ' — finishing capture and restoring adapter. Save latest session when ready.')
+                        self.capture_notice.set('HANDSHAKE CAPTURED for ' + event['bssid'] + ' — finishing capture and restoring adapter. Your named capture will save automatically.')
                         self.write('HANDSHAKE CAPTURED: ' + event['bssid'])
                         self.update_capture_controls()
                     elif event_type == 'capture_status':
@@ -627,12 +640,23 @@ class App(tk.Tk):
                             self.last_session = paths[0].parent
                             self.last_caps = [p for p in paths if p.suffix == '.cap']
                             self.write('Files ready. Use Save latest session to export.')
+                            if action == 'capture':
+                                settings = self.jobs.get(action, {}).get('data', {})
+                                folder = settings.get('_save_folder', self.export_folder.get())
+                                name = settings.get('_capture_name', self.capture_name.get())
+                                self.save_session(self.last_session, folder, name, self.handshake_found)
                     elif event_type == 'networks':
                         self.update_networks(event['items'])
                 elif kind == 'finished':
                     self.finish_job(*data)
                     if self.pending_close and not self.cleanup_requested and not self.jobs:
                         return
+                elif kind == 'saved_capture':
+                    self.saved_notice.set(data)
+                    self.write(data)
+                elif kind == 'save_error':
+                    self.saved_notice.set('Save failed: ' + data + ' Original session files are retained.')
+                    messagebox.showerror('Save failed', self.saved_notice.get())
                 elif kind == 'analysis':
                     self.write(data)
                     messagebox.showinfo('Handshake check', data)
@@ -649,14 +673,20 @@ class App(tk.Tk):
         if not self.last_session:
             messagebox.showinfo('Save captures', 'Complete or stop an operation first.')
             return
-        try:
-            destination = Path(self.export_folder.get()).expanduser() / self.last_session.name
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(self.last_session, destination, dirs_exist_ok=False)
-            self.write(f'Saved session to {destination}')
-            messagebox.showinfo('Saved', str(destination))
-        except Exception as exc:
-            messagebox.showerror('Save failed', str(exc))
+        self.save_session(self.last_session, self.export_folder.get(), self.capture_name.get(), self.handshake_found)
+
+    def save_session(self, source, folder, name, confirmed):
+        self.saved_notice.set('Saving capture…')
+        def work():
+            try:
+                destination, captures = save_capture_session(source, folder, name)
+                label = 'Confirmed handshake' if confirmed else 'Capture saved; handshake NOT confirmed'
+                path = captures[0] if captures else destination
+                self.events.put(('saved_capture', f'{label}: {path}'))
+            except Exception as exc:
+                self.events.put(('save_error', str(exc)))
+        # Finish file copies even if the window closes during a large export.
+        threading.Thread(target=work, daemon=False).start()
 
     def check_file(self):
         filename = filedialog.askopenfilename(title='Select a capture file', filetypes=[('Packet captures', '*.cap *.pcap *.pcapng'), ('All files', '*')], initialdir=str(self.last_session or Path.home()))
