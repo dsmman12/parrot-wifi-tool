@@ -120,6 +120,13 @@ with patch.object(App, 'refresh'):
     assert app.handshake_found
     assert str(app.broadcast_button['state'])=='disabled'
     app.jobs.clear()
+    # Finalized capture files automatically export using the settings at Start.
+    app.jobs={'capture':{'data':{'_save_folder':'/chosen/folder','_capture_name':'MyRouter'}}}
+    app.events.put(('worker',('capture',{'event':'files','paths':['/capture/session/capture-01.cap']})))
+    with patch.object(app,'save_session') as save:
+        app.poll_events()
+        save.assert_called_once_with(pathlib.Path('/capture/session'), '/chosen/folder', 'MyRouter', True)
+    app.jobs.clear()
     # Closing waits for BOTH overlapping workers, then for verified restoration.
     def fake_start(action,data,cleanup=False):
         app.jobs[action]={'process':None,'cancel':False,'data':data,'cleanup':cleanup}
