@@ -56,6 +56,17 @@ class ProcessTests(unittest.TestCase):
             finally:
                 os.umask(old_mask)
 
+    def test_custom_mac_is_not_immediately_given_back_to_networkmanager(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
+            before = dict(name='wlan0', phy='phy#1', type='managed', mac='02:11:22:33:44:55')
+            after = {**before, 'mac':'02:11:22:33:44:66'}
+            with patch.object(worker, 'ROOT', pathlib.Path(folder)), patch.object(worker.os, 'geteuid', return_value=0), patch.dict(worker.os.environ, {'PKEXEC_UID':'1000'}), patch.object(worker.pwd, 'getpwuid') as user, patch.object(worker, 'device', side_effect=[before,after,after]), patch.object(worker,'remember'), patch.object(worker,'unmanage') as unmanage, patch.object(worker,'command') as command, patch.object(sys, 'argv', ['worker.py','custom','{"interface":"wlan0","mac":"02:11:22:33:44:66"}']):
+                user.return_value.pw_gid=1000
+                worker.main()
+                unmanage.assert_called_once_with('wlan0')
+                self.assertFalse(any(c.args[0][0]=='nmcli' for c in command.call_args_list))
+                self.assertIn(['ip','link','set','dev','wlan0','address',after['mac']], [c.args[0] for c in command.call_args_list])
+
     def test_rejected_mode_rolls_back(self):
         # Exercise main's config rollback without issuing commands to a radio.
         with tempfile.TemporaryDirectory() as folder:
