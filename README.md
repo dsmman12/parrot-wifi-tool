@@ -57,7 +57,7 @@ Captures/logs can contain device identifiers, traffic and recovered WPS credenti
 
 ## Adapter and protocol limitations
 
-Monitor mode and injection depend on chipset, kernel and driver. This app uses `iw` on the selected interface, verifies the mode, and attempts to roll back configuration failures. It does not install or repair DKMS drivers. The RTL8814AU driver warnings previously seen on Paul's system may still require separate diagnosis. Other cards sharing the same physical radio can also be affected by channel/mode changes; use a dedicated USB radio.
+Monitor mode and injection depend on chipset, kernel and driver. This app uses `iw` on the selected interface, verifies the mode, and attempts to roll back configuration failures. It does not install or repair DKMS drivers. RTL8814AU driver warnings may still require separate driver diagnosis. Other cards sharing the same physical radio can also be affected by channel/mode changes; use a dedicated USB radio.
 
 Only the selected interface is unmanaged in NetworkManager. The app does not run `airmon-ng check kill` or globally stop networking. Original MAC, mode, link state and known NetworkManager management state are saved before the first change. The saved MAC is the address present then, which can differ from the factory hardware MAC. Persistent state survives a normal restart; unplugging/replacing a card with the same interface name can make old saved state stale. Use Restore adapter before unplugging.
 

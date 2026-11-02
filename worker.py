@@ -249,6 +249,7 @@ def execute(resources):
                 raise ValueError('Deauth target must match the running capture and channel.')
     session_root = ROOT / 'sessions'
     session_root.mkdir(mode=0o711, exist_ok=True)
+    os.chmod(session_root, 0o711)  # mkdir mode is restricted by the worker's umask.
     # Allow only traversal to private group-readable session folders, not listing.
     os.chmod(ROOT, 0o711)
     session = session_root / (time.strftime('%Y%m%d-%H%M%S-') + secrets.token_hex(6))
