@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -131,7 +132,8 @@ class App(tk.Tk):
         row.pack(fill='x', pady=4)
         ttk.Label(row, text='Capture limit (seconds)').pack(side='left')
         ttk.Spinbox(row, from_=5, to=3600, textvariable=self.seconds, width=7).pack(side='left', padx=8)
-        ttk.Button(row, text='Start client scan & capture', command=self.capture).pack(side='left', padx=5)
+        self.capture_button = ttk.Button(row, text='Start client scan & capture', command=self.capture)
+        self.capture_button.pack(side='left', padx=5)
         ttk.Button(row, text='Stop capture', command=lambda: self.stop('capture')).pack(side='left', padx=5)
         ttk.Button(row, text='Check handshake file…', command=self.check_file).pack(side='left', padx=5)
         ttk.Label(target_capture, textvariable=self.capture_notice, wraplength=950).pack(anchor='w', pady=6)
@@ -186,6 +188,13 @@ class App(tk.Tk):
         self.log = ScrolledText(self, height=10, bg='#080f1b', fg='#a6e3c1', insertbackground='white', font=('Monospace', 9), state='disabled')
         self.log.pack(fill='both', padx=14, pady=(0, 12))
         self.write('Ready. Scan networks → choose your router → scan its clients → select a client → deauth → wait for handshake. Launch with parrot-wifi-tool to authorize sudo once in the terminal.')
+
+    def report_callback_exception(self, exc_type, exc_value, tb):
+        # Tk otherwise prints button failures only to a hidden terminal.
+        detail = ''.join(traceback.format_exception(exc_type, exc_value, tb))
+        self.write(detail[-4000:])
+        self.capture_notice.set('Interface error: ' + str(exc_value))
+        messagebox.showerror('Wi-Fi tool error', str(exc_value))
 
     def write(self, text):
         self.log.configure(state='normal')
@@ -320,6 +329,8 @@ class App(tk.Tk):
         self.update_capture_controls()
 
     def update_capture_controls(self):
+        busy = 'capture' in self.jobs or self.pending_close
+        self.capture_button.configure(state='disabled' if busy else 'normal')
         ready = bool(self.client_tree.selection()) and set(self.jobs) == {'capture'} and not self.cleanup_requested and not self.handshake_found
         self.reconnect_button.configure(state='normal' if ready else 'disabled')
         broadcast_ready = set(self.jobs) == {'capture'} and not self.cleanup_requested and not self.handshake_found
@@ -327,7 +338,14 @@ class App(tk.Tk):
 
     def capture(self):
         try:
-            data = self.target_data()
+            data = {'bssid': mac(self.bssid.get()), 'channel': number(self.channel.get(), 1, 233)}
+            if not self.authorized.get():
+                if not messagebox.askokcancel('Start client scan',
+                    f"Start client scan and capture for {data['bssid']} on channel {data['channel']}?\nConfirm this is your network or you have permission to test it."):
+                    self.capture_notice.set('Client scan cancelled. Select your router and click Start when ready.')
+                    return
+                self.authorized.set(True)
+            data['authorized'] = True
             data['seconds'] = number(self.seconds.get(), 5, 3600)
             data['interface'] = self.adapter.get()
             if self.pending_close:
@@ -394,9 +412,10 @@ class App(tk.Tk):
         if action == 'survey':
             self.update_networks([])
         if action == 'capture':
+            self.info_label.configure(text=f'{name}: preparing capture…')
             self.handshake_found = False
             self.update_clients([])
-            self.capture_notice.set(f"Scanning clients and waiting for handshake: {data['bssid']} · channel {data['channel']}")
+            self.capture_notice.set(f"Starting client scan: {data['bssid']} · channel {data['channel']} — authorizing worker…")
             self.tabs.select(self.target_capture_tab)
         related_capture = action == 'deauth' and 'capture' in self.jobs
         self.jobs[action] = {'process': None, 'cancel': False, 'data': data, 'cleanup': cleanup, 'related_capture': related_capture}
@@ -518,6 +537,13 @@ class App(tk.Tk):
         elif self.cleanup_requested or self.pending_close:
             self.advance_cleanup()
         elif not self.jobs:
+            if self.pending_capture is not None:
+                if code != 0:
+                    self.pending_capture = None
+                    self.capture_notice.set('Client scan cancelled because the previous operation failed. Retry after restoring the adapter.')
+                else:
+                    self.request_cleanup()
+                    return
             self.adapter_box.configure(state='readonly')
             self.refresh()
 
@@ -530,6 +556,10 @@ class App(tk.Tk):
                     break
                 kind, data = self.events.get_nowait()
                 if kind == 'devices':
+                    # Ignore idle refresh results that arrive after a job starts.
+                    # Their old managed-mode snapshot must not overwrite live mode.
+                    if self.jobs:
+                        continue
                     self.devices = data
                     for item in data:
                         try:
@@ -572,8 +602,15 @@ class App(tk.Tk):
                     elif event_type == 'session':
                         # Do not replace latest completed session until files are finalized.
                         self.write('Session: ' + event['path'])
+                    elif event_type == 'capture_stage':
+                        self.capture_notice.set(event['text'])
+                        self.status.set(event['text'])
+                        if event.get('mode') == 'monitor':
+                            self.info_label.configure(text=event['text'])
                     elif event_type == 'clients':
                         self.update_clients(event['items'])
+                        if not self.handshake_found:
+                            self.capture_notice.set(f"Capture active · {len(event['items'])} associated clients seen. Waiting for client traffic / a handshake.")
                     elif event_type == 'handshake':
                         self.handshake_found = True
                         self.capture_notice.set('HANDSHAKE CAPTURED for ' + event['bssid'] + ' — finishing capture and restoring adapter. Save latest session when ready.')

@@ -174,6 +174,7 @@ def _run_stream(args, seconds, session, stop_on_lock, on_tick, on_line, input_fd
     next_tick = time.monotonic()
     interrupted = False
     pending = b''
+    output_tail = []
     try:
         with (session / 'output.log').open('w') as log:
             while True:
@@ -196,6 +197,8 @@ def _run_stream(args, seconds, session, stop_on_lock, on_tick, on_line, input_fd
                         line, pending = pending.split(b'\n', 1)
                         text = clean(line.decode(errors='replace')).strip()
                         if text:
+                            output_tail.append(text[:500])
+                            output_tail = output_tail[-8:]
                             emit('log', text=text[:2000])
                             if on_line:
                                 on_line(text)
@@ -224,7 +227,8 @@ def _run_stream(args, seconds, session, stop_on_lock, on_tick, on_line, input_fd
             p.wait()
         p.stdout.close()
     if p.returncode and not interrupted:
-        raise RuntimeError(f'{args[0]} exited with code {p.returncode}; see output log.')
+        detail = '\n'.join(output_tail)[-1800:]
+        raise RuntimeError(f'{args[0]} exited with code {p.returncode}.\n{detail or 'No output was produced.'}')
     emit('log', text='Stopped / time limit reached.' if interrupted else 'Operation finished.')
 
 def handoff_files(session, uid, gid):
@@ -362,6 +366,8 @@ def radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds
     handshake_found = False
     threading.Thread(target=listen, daemon=True).start()
     try:
+        if action == 'capture':
+            emit('capture_stage', text=f'Preparing {name}: entering monitor mode…')
         if not prepare_radio(name, info):
             return
         session_root = ROOT / 'sessions'
@@ -383,6 +389,8 @@ def radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds
         else:
             args = test_command(action, name, data, session)
         if channel:
+            if action == 'capture':
+                emit('capture_stage', text=f'{name}: monitor mode verified; tuning to channel {channel}…', mode='monitor')
             command(['iw', 'dev', name, 'set', 'channel', channel])
         if action == 'capture':
             cap_scope.write_text(json.dumps({'bssid': bssid, 'channel': channel}))
