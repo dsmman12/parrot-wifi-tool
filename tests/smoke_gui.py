@@ -6,6 +6,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from app import App
 with patch.object(App, 'refresh'):
     app = App()
+    assert pathlib.Path(app.export_folder.get()) == pathlib.Path.home() / 'Desktop' / 'handshakes'
     app.events.put(('devices', [{'name':'wlxTEST','phy':'phy#1','mac':'02:11:22:33:44:55','type':'monitor'}]))
     app.poll_events()
     assert app.adapter.get() == 'wlxTEST'
