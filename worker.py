@@ -227,8 +227,8 @@ def _run_stream(args, seconds, session, stop_on_lock, on_tick, on_line, input_fd
             p.wait()
         p.stdout.close()
     if p.returncode and not interrupted:
-        detail = '\n'.join(output_tail)[-1800:]
-        raise RuntimeError(f'{args[0]} exited with code {p.returncode}.\n{detail or 'No output was produced.'}')
+        detail = '\n'.join(output_tail)[-1800:] or 'No output was produced.'
+        raise RuntimeError(f'{args[0]} exited with code {p.returncode}.\n{detail}')
     emit('log', text='Stopped / time limit reached.' if interrupted else 'Operation finished.')
 
 def handoff_files(session, uid, gid):
