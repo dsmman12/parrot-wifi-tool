@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter.scrolledtext import ScrolledText
@@ -434,7 +435,13 @@ class App(tk.Tk):
             return
         def work():
             try:
-                p = subprocess.run(['aircrack-ng', '-a', '2', '-b', bssid, '-w', '/dev/null', filename], capture_output=True, text=True, timeout=30)
+                # Empty dictionaries crash some packaged Aircrack-ng builds.
+                # A one-character entry is invalid for WPA (minimum 8), so this
+                # forces capture parsing without making any valid password guesses.
+                with tempfile.TemporaryDirectory(prefix='parrot-wifi-check-') as folder:
+                    sentinel = Path(folder) / 'invalid-wpa-entry.txt'
+                    sentinel.write_text('x\n')
+                    p = subprocess.run(['aircrack-ng', '-a', '2', '-b', bssid, '-w', str(sentinel), filename], capture_output=True, text=True, timeout=30)
                 output = clean(p.stdout + '\n' + p.stderr)
                 self.events.put(('analysis', handshake_status(output) + '\n\n' + output[-3500:]))
             except Exception as exc:
