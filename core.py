@@ -58,11 +58,17 @@ def networks(text):
     return result
 
 def handshake_status(output):
-    """Only explicit positive aircrack counts count; tool errors are inconclusive."""
+    """Recognize counted or targeted WPA acceptance; tool errors stay inconclusive."""
     output = clean(output)
     counts = [int(n) for n in re.findall(r'\b(\d+)\s+handshakes?\b', output, re.I)]
+    lower = output.lower()
+    if 'no valid wpa handshakes found' in lower:
+        return 'No usable WPA/WPA2 handshake recognized in this file.'
+    targeted_acceptance = bool(re.search(r'\b[1-9][0-9]* potential targets?\b', lower)) and 'key not found' in lower
     if any(n > 0 for n in counts):
         return 'Handshake recognized by Aircrack-ng (not a recovered password).'
+    if targeted_acceptance:
+        return 'Aircrack-ng accepted WPA/WPA2 authentication data (handshake or PMKID). No password was recovered.'
     if 'no valid wpa handshakes found' in output.lower() or counts:
         return 'No usable WPA/WPA2 handshake recognized in this file.'
     return 'Inconclusive. Inspect the tool output; no positive handshake result was recognized.'

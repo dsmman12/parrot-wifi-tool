@@ -35,7 +35,7 @@ If your desktop lacks a polkit authentication agent, pkexec prompts may fail. La
 - Selecting a WPS-advertising router offers **Test WPS PIN** and **Test Pixie Dust** directly below the network list. Finish/stop the scan before testing. Offers are disabled for a reported lock and still require target authorization and active-test confirmation.
 - Targeted WPA/WPA2 capture with a 5–3,600 second limit; Stop flushes files.
 - A folder picker and session export, including packet captures, CSV and tool output.
-- Local handshake recognition using Aircrack-ng with one deliberately invalid one-character WPA entry (not a valid password guess). This checks the capture, not a password. Inconclusive tool output is explicitly labeled.
+- Local handshake recognition using Aircrack-ng with one deliberately invalid one-character WPA entry (not a valid password guess). This checks the capture, not a password. Explicit handshake counts and acceptance of WPA/WPA2 authentication data (which may be a PMKID) are labeled separately. Inconclusive tool output is explicitly labeled.
 - Selected-AP injection test.
 - Directed deauthentication against a specified client, 1–5 bursts. This may run beside a capture of the same AP/channel on the selected card.
 - WPS discovery using Wash, a bounded PIN test (1–100 attempts, 120 seconds), and one-attempt Pixie Dust test (120 seconds). Reported WPS locks/rate limiting stop the test. No lock bypass is used.
