@@ -50,8 +50,8 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(calls[0].args,('wlan0','monitor'))
         self.assertEqual(unmanage,1)
 
-    def test_completed_survey_stays_ready_but_stop_restores(self):
-        self.assertEqual(self.radio(action='survey')[0],0)
+    def test_completed_and_stopped_surveys_both_restore(self):
+        self.assertEqual(self.radio(action='survey')[0],1)
         self.assertEqual(self.radio(action='survey',stopped=True)[0],1)
 
     def test_last_shared_worker_does_the_restoration(self):
