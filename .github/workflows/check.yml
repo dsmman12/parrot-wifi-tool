@@ -1,0 +1,16 @@
+name: Checks
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run tests
+        run: |
+          python3 -m py_compile app.py worker.py core.py
+          python3 -m unittest discover -s tests -v
+          bash -n install.sh uninstall.sh
+      - name: Install desktop test dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+      - name: Desktop smoke test
+        run: xvfb-run -a python3 tests/smoke_gui.py
