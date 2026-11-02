@@ -34,6 +34,37 @@ with patch.object(App, 'refresh'):
         error.assert_called_once()
     app.update_networks([{**item,'wps':'Unknown','wps_detected':False,'wps_locked':None}])
     assert str(app.wps_pixie_offer['state']) == 'disabled'
+    # Closing waits for BOTH overlapping workers, then for verified restoration.
+    def fake_start(action,data,cleanup=False):
+        app.jobs[action]={'process':None,'cancel':False,'data':data,'cleanup':cleanup}
+        return True
+    app.dirty_adapters={'wlxTEST'}
+    app.jobs={a:{'process':None,'cancel':False,'data':{'interface':'wlxTEST'}} for a in ('capture','deauth')}
+    with patch.object(app,'start',side_effect=fake_start) as start, patch.object(app,'destroy') as destroy, patch('app.messagebox.askokcancel',return_value=True):
+        app.close_app()
+        app.finish_job('deauth',0)
+        start.assert_not_called()
+        destroy.assert_not_called()
+        app.finish_job('capture',0)
+        start.assert_called_once_with('restore',{'interface':'wlxTEST'},cleanup=True)
+        destroy.assert_not_called()
+        app.events.put(('worker',('restore',{'event':'restored','interface':'wlxTEST'})))
+        app.events.put(('finished',('restore',0)))
+        app.poll_events()
+        assert not app.dirty_adapters
+        destroy.assert_called_once()
+    # Denied restoration keeps the app open and the dirty adapter available for retry.
+    app.pending_close=False
+    app.dirty_adapters={'wlanOther'}
+    with patch.object(app,'start',side_effect=fake_start), patch.object(app,'destroy') as destroy, patch('app.messagebox.showerror') as error:
+        app.close_app()
+        app.finish_job('restore',127)
+        destroy.assert_not_called()
+        error.assert_called_once()
+        assert app.pending_close is False
+        assert app.dirty_adapters=={'wlanOther'}
+        assert app.cleanup_requested is False
+    app.dirty_adapters.clear()
     app.update_idletasks()
     app.destroy()
-print('GUI and WPS offer smoke tests passed')
+print('GUI, WPS offer and automatic-restoration smoke tests passed')

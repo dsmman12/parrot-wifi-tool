@@ -49,7 +49,7 @@ class ProcessTests(unittest.TestCase):
             fake_device = dict(name='wlan0', phy='phy#1', type='monitor', mac='02:11:22:33:44:55')
             old_mask = os.umask(0o077)
             try:
-                with patch.object(worker, 'ROOT', root), patch.object(worker.os, 'geteuid', return_value=0), patch.dict(worker.os.environ, {'PKEXEC_UID':'1000'}), patch.object(worker.pwd, 'getpwuid') as user, patch.object(worker, 'device', return_value=fake_device), patch.object(worker.threading, 'Thread'), patch.object(worker, 'run_stream'), patch.object(worker, 'command'), patch.object(worker, 'handoff_files'), patch.object(worker, 'emit'), patch.object(sys, 'argv', ['worker.py', 'survey', '{"interface":"wlan0","seconds":5}']):
+                with patch.object(worker, 'ROOT', root), patch.object(worker.os, 'geteuid', return_value=0), patch.dict(worker.os.environ, {'PKEXEC_UID':'1000'}), patch.object(worker.pwd, 'getpwuid') as user, patch.object(worker, 'device', return_value=fake_device), patch.object(worker.threading, 'Thread'), patch.object(worker, 'run_stream'), patch.object(worker, 'remember'), patch.object(worker, 'command'), patch.object(worker, 'handoff_files'), patch.object(worker, 'emit'), patch.object(sys, 'argv', ['worker.py', 'survey', '{"interface":"wlan0","seconds":5}']):
                     user.return_value.pw_gid = 1000
                     worker.main()
                 self.assertEqual(stat.S_IMODE((root / 'sessions').stat().st_mode), 0o711)
