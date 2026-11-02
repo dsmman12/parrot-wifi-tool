@@ -40,6 +40,29 @@ with patch.object(App, 'refresh'):
         error.assert_called_once()
     app.update_networks([{**item,'wps':'Unknown','wps_detected':False,'wps_locked':None}])
     assert str(app.wps_pixie_offer['state']) == 'disabled'
+    # A start click during survey/restore is retained and runs only after recovery.
+    app.authorized.set(True)
+    app.jobs={'survey':{'process':None,'cancel':False,'data':{'interface':'wlxTEST'}}}
+    with patch.object(app,'start') as start, patch.object(app,'stop') as stop:
+        app.capture()
+        start.assert_not_called()
+        stop.assert_called_once_with('survey')
+        assert app.pending_capture['interface']=='wlxTEST'
+        assert 'queued' in app.capture_notice.get()
+    app.jobs.clear()
+    app.cleanup_requested=True
+    app.cleanup_failed=False
+    app.dirty_adapters.clear()
+    with patch.object(app,'start',return_value=True) as start:
+        app.advance_cleanup()
+        assert start.call_args.args[0]=='capture'
+        assert start.call_args.args[1]['bssid']==item['bssid']
+        assert app.pending_capture is None
+    # Stop All cancels queued work, even while recovery is still running.
+    app.pending_capture={'interface':'wlxTEST'}
+    with patch.object(app,'request_cleanup'):
+        app.stop_all()
+        assert app.pending_capture is None
     # Targeted scan shows clients; selected-client and whole-AP actions stay
     # beside the live capture, and deauth completion does not end capture.
     app.pending_close=False
