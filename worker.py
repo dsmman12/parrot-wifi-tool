@@ -184,6 +184,13 @@ def handoff_files(session, uid, gid):
     os.chmod(session, 0o750)
     os.chown(session, 0, gid)
 
+def caller_uid():
+    # sudo/pkexec set the original desktop user's UID. Never accept it via JSON.
+    uid = int(os.environ.get('SUDO_UID', os.environ.get('PKEXEC_UID', '-1')))
+    if uid <= 0:
+        raise ValueError('Launch with parrot-wifi-tool as your normal desktop user so sudo can authorize the worker.')
+    return uid
+
 def main():
     with contextlib.ExitStack() as resources:
         execute(resources)
@@ -194,10 +201,7 @@ def execute(resources):
     os.umask(0o077)
     ROOT.mkdir(mode=0o711, parents=True, exist_ok=True)
     os.chmod(ROOT, 0o711)
-    # PKEXEC_UID is supplied by pkexec, not the GUI request.
-    uid = int(os.environ.get('PKEXEC_UID', '-1'))
-    if uid <= 0:
-        raise ValueError('Launch from your normal desktop account through pkexec.')
+    uid = caller_uid()
     gid = pwd.getpwuid(uid).pw_gid
     action, data = sys.argv[1], json.loads(sys.argv[2])
     name = data.get('interface', '')

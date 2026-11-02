@@ -5,19 +5,15 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
 fi
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-for file in app.py worker.py core.py; do
+for file in app.py worker.py core.py launcher.sh; do
     test -f "$project_dir/$file" || { echo "Missing $file. Download the complete repository."; exit 1; }
 done
 sudo apt-get update
-sudo apt-get install -y python3 python3-tk iw iproute2 network-manager aircrack-ng reaver pixiewps pkexec
+sudo apt-get install -y python3 python3-tk iw iproute2 network-manager aircrack-ng reaver pixiewps sudo
 sudo install -d -o root -g root -m 755 /usr/local/lib/parrot-wifi-tool
 sudo install -o root -g root -m 644 "$project_dir/app.py" "$project_dir/worker.py" "$project_dir/core.py" /usr/local/lib/parrot-wifi-tool/
 sudo install -d -o root -g root -m 755 /usr/local/bin
-sudo tee /usr/local/bin/parrot-wifi-tool >/dev/null <<'LAUNCHER'
-#!/bin/sh
-exec /usr/bin/python3 -I /usr/local/lib/parrot-wifi-tool/app.py "$@"
-LAUNCHER
-sudo chmod 755 /usr/local/bin/parrot-wifi-tool
+sudo install -o root -g root -m 755 "$project_dir/launcher.sh" /usr/local/bin/parrot-wifi-tool
 mkdir -p "$HOME/.local/share/applications"
 cat > "$HOME/.local/share/applications/parrot-wifi-tool.desktop" <<'DESKTOP'
 [Desktop Entry]
@@ -26,7 +22,7 @@ Name=Parrot Wi-Fi Tool
 Comment=Desktop Wi-Fi testing for authorized networks
 Exec=/usr/local/bin/parrot-wifi-tool
 Icon=network-wireless
-Terminal=false
+Terminal=true
 Categories=Network;System;
 DESKTOP
 if command -v xdg-user-dir >/dev/null 2>&1; then

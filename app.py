@@ -22,7 +22,7 @@ os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
 BASE = Path(__file__).resolve().parent
 RADIO_ACTIONS = {'survey', 'capture', 'injection', 'deauth', 'wash', 'wps', 'pixie'}
 CONFIG_ACTIONS = {'monitor', 'managed', 'random', 'custom', 'restore-mac'}
-TOOLS = ('iw', 'ip', 'nmcli', 'pkexec', 'airodump-ng', 'aireplay-ng', 'aircrack-ng', 'wash', 'reaver', 'pixiewps')
+TOOLS = ('iw', 'ip', 'nmcli', 'sudo', 'airodump-ng', 'aireplay-ng', 'aircrack-ng', 'wash', 'reaver', 'pixiewps')
 
 class App(tk.Tk):
     def __init__(self):
@@ -161,7 +161,7 @@ class App(tk.Tk):
         ttk.Button(bar, text='STOP ALL', command=self.stop_all).pack(side='right')
         self.log = ScrolledText(self, height=10, bg='#080f1b', fg='#a6e3c1', insertbackground='white', font=('Monospace', 9), state='disabled')
         self.log.pack(fill='both', padx=14, pady=(0, 12))
-        self.write('Ready. Refresh cards → enable monitor mode → scan → select target → capture. Administrator prompts come from pkexec.')
+        self.write('Ready. Refresh cards → enable monitor mode → scan → select target → capture. Launch with parrot-wifi-tool to authorize sudo once in the terminal.')
 
     def write(self, text):
         self.log.configure(state='normal')
@@ -301,7 +301,7 @@ class App(tk.Tk):
             if not allowed:
                 messagebox.showinfo('Operation running', 'Stop the current operation first. Only a directed deauth test on the captured target can run alongside capture.')
                 return
-        missing = [t for t in ('pkexec',) if not shutil.which(t)]
+        missing = [t for t in ('sudo',) if not shutil.which(t)]
         required = {'survey': 'airodump-ng', 'capture': 'airodump-ng', 'deauth': 'aireplay-ng', 'injection': 'aireplay-ng', 'wash': 'wash', 'wps': 'reaver', 'pixie': 'reaver'}.get(action)
         if required and not shutil.which(required):
             missing.append(required)
@@ -320,7 +320,7 @@ class App(tk.Tk):
         self.write(f'[{action}] Requesting administrator authorization…')
         def work():
             try:
-                args = ['pkexec', '/usr/bin/python3', '-I', str(BASE / 'worker.py'), action, json.dumps(data)]
+                args = ['sudo', '-n', '/usr/bin/python3', '-I', str(BASE / 'worker.py'), action, json.dumps(data)]
                 p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 # Send process handle through queue; all Tk state stays on the UI thread.
                 self.events.put(('process', (action, p)))
@@ -396,6 +396,8 @@ class App(tk.Tk):
                     self.dirty_adapters.add(job['data']['interface'])
             except OSError:
                 pass
+        if code != 0 and job and not job.get('worker_error'):
+            self.write('If sudo reports that a password is required, restart with parrot-wifi-tool to authorize the session.')
         self.write(f'[{action}] Finished (exit {code}).' + (' Authorization cancelled or denied.' if code in (126, 127) else ''))
         if job and job.get('cleanup') and (code != 0 or job['data']['interface'] in self.dirty_adapters):
             self.cleanup_failed = True
@@ -448,6 +450,8 @@ class App(tk.Tk):
                         self.dirty_adapters.discard(event['interface'])
                         self.write('Verified network settings restored: ' + event['interface'])
                     elif event_type in ('log', 'error'):
+                        if event_type == 'error' and action in self.jobs:
+                            self.jobs[action]['worker_error'] = True
                         self.write(f'[{action}] ' + event.get('text', ''))
                     elif event_type == 'session':
                         # Do not replace latest completed session until files are finalized.

@@ -1,6 +1,6 @@
 # Parrot Wi-Fi Tool
 
-A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.3.0** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
+A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.3.1** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
 
 ## Install on Parrot
 
@@ -20,9 +20,9 @@ Open **Parrot Wi-Fi Tool** from the application menu, use the desktop shortcut, 
 parrot-wifi-tool
 ```
 
-The installer uses the distribution packages for Python/Tk, iw, iproute2, NetworkManager, Aircrack-ng, Reaver/Wash, Pixiewps and pkexec. It installs root-owned application files under `/usr/local/lib/parrot-wifi-tool`. The UI runs as your user; a fixed-operation helper uses a standard **pkexec administrator prompt** for adapter/radio operations. No passwordless sudo rule, custom broad polkit policy, web server, or remote control service is installed.
+The installer uses the distribution packages for Python/Tk, iw, iproute2, NetworkManager, Aircrack-ng, Reaver/Wash, Pixiewps and sudo. It installs root-owned application files under `/usr/local/lib/parrot-wifi-tool`. The UI runs as your user; a fixed-operation helper uses **sudo authorization** for adapter/radio operations. The launcher asks for your normal sudo password in a terminal and refreshes that cached authorization while the window is open; buttons use noninteractive sudo instead of polkit popups. No passwordless sudo rule, custom broad polkit policy, web server, or remote control service is installed.
 
-If your desktop lacks a polkit authentication agent, pkexec prompts may fail. Launch within a normal Parrot desktop session with its authentication agent running. Do not run the whole GUI as root.
+Start using `parrot-wifi-tool` (or its application-menu shortcut, which opens a terminal). Enter your normal Parrot sudo password there when requested. Keep that terminal open while using the app. Do not put sudo in front of the launcher or run the GUI itself as root. If your sudo policy forbids cached credentials, noninteractive helper calls will fail and the log will show the sudo error; no passwordless sudo rule is added.
 
 ## What is included
 
@@ -46,7 +46,7 @@ If your desktop lacks a polkit authentication agent, pkexec prompts may fail. La
 ## First use
 
 1. Plug in your USB Wi-Fi adapter and open the app. The first `wlx…` card is selected if present; always verify the dropdown.
-2. Open **Adapter controls → Enable monitor mode**. Approve the administrator prompt. Confirm that mode changes to `monitor` in the adapter header/log.
+2. Open **Adapter controls → Enable monitor mode**. Authorize sudo in the launcher terminal if requested. Confirm that mode changes to `monitor` in the adapter header/log.
 3. Open **Survey & capture → Scan networks**. Select your network as rows arrive. This fills the AP BSSID and channel; WPS status updates during the scan. A router advertising WPS shows test options below the list. Finish/stop the scan before testing; a reported WPS lock disables the offered tests.
 4. Confirm you own or have permission to test that target. Choose a save folder, set the capture duration, and select **Start targeted capture**.
 5. Reconnect one of your own devices to the network. Stop capture, then **Save latest session**. **Check handshake file…** opens a file picker; select the `.cap` and keep the correct AP BSSID selected.
