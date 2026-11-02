@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.cap
+*.pcap
+*.pcapng
+*.csv
+*.session
+*.log
+captures/
+sessions/
