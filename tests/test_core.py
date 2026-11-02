@@ -32,6 +32,10 @@ class ValidationTests(unittest.TestCase):
         self.assertIn('No usable', handshake_status('WPA (0 handshakes)'))
         self.assertIn('No usable', handshake_status('No valid WPA handshakes found.'))
         self.assertIn('Inconclusive', handshake_status('EAPOL frames found\nFailed to open capture'))
+        self.assertIn('accepted WPA/WPA2', handshake_status('1 potential targets\nKEY NOT FOUND'))
+        self.assertIn('Inconclusive', handshake_status('KEY NOT FOUND'))
+        self.assertIn('Inconclusive', handshake_status('0 potential targets\nKEY NOT FOUND'))
+        self.assertIn('No usable', handshake_status('1 potential targets\nNo valid WPA handshakes found.'))
 
     def test_directed_deauth_is_bounded_and_has_client(self):
         data = dict(bssid='02:11:22:33:44:55', channel=6, station='02:11:22:33:44:66', count=2)

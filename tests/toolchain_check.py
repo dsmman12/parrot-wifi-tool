@@ -77,6 +77,11 @@ with tempfile.TemporaryDirectory() as folder:
     sentinel=directory/'invalid-wpa-entry.txt'
     sentinel.write_text('x\n')
     _, output = run(['aircrack-ng','-a','2','-b','00:0d:93:eb:b0:8c','-w',str(sentinel),str(directory/'wpa.cap')])
-    assert 'Handshake recognized by' in handshake_status(output), output
+    status=handshake_status(output)
+    assert 'Handshake recognized by' in status or 'accepted WPA/WPA2' in status, output
     print('PASS: real Aircrack-ng handshake output matches our detector')
+    _, negative = run(['aircrack-ng','-a','2','-b','00:c0:ca:78:b1:37','-w',str(sentinel),str(directory/'wps2.0.pcap')])
+    negative_status=handshake_status(negative)
+    assert 'Handshake recognized by' not in negative_status and 'accepted WPA/WPA2' not in negative_status, negative
+    print('PASS: beacon-only capture is never reported as a handshake')
 print('All offline toolchain checks passed. Live monitor/injection still require your adapter.')
