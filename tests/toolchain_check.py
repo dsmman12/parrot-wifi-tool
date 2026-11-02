@@ -13,7 +13,11 @@ import sys
 import tempfile
 import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from core import WpsObserver, handshake_status, networks
+from core import WpsObserver, handshake_status, networks, handshake_announced
+import worker
+import struct
+import contextlib
+import io
 
 os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
 ENV = {**os.environ, 'LC_ALL':'C', 'TERM':'xterm'}
@@ -84,4 +88,27 @@ with tempfile.TemporaryDirectory() as folder:
     negative_status=handshake_status(negative)
     assert 'Handshake recognized by' not in negative_status and 'accepted WPA/WPA2' not in negative_status, negative
     print('PASS: beacon-only capture is never reported as a handshake')
+    # Give the actual Airodump display time to announce the real fixture's
+    # handshake before EOF overwrites its status message. No radio is involved.
+    content=(directory/'wpa.cap').read_bytes()
+    offset=24
+    last=None
+    while offset+16 <= len(content):
+        sec,usec,size,original=struct.unpack('<IIII',content[offset:offset+16])
+        last=(sec,usec,size,original,content[offset+16:offset+16+size])
+        offset+=16+size
+    sec,usec,size,original,payload=last
+    slow=directory/'slow-wpa.cap'
+    slow.write_bytes(content+struct.pack('<IIII',sec+2,usec,size,original)+payload)
+    found=[]
+    def observe(line):
+        if handshake_announced(line,'00:0d:93:eb:b0:8c'):
+            found.append(True)
+            worker.STOP.set()
+    worker.STOP.clear()
+    with contextlib.redirect_stdout(io.StringIO()) as display:
+        worker.run_stream(['airodump-ng','-r',str(slow),'--real-time','--background','0','--update','1','--bssid','00:0d:93:eb:b0:8c'],5,directory,on_line=observe,terminal_width=160)
+    worker.STOP.clear()
+    assert found, 'Real Airodump handshake announcement was not detected:\n'+display.getvalue()[-8000:]
+    print('PASS: live display callback recognizes real Airodump handshake and stops capture')
 print('All offline toolchain checks passed. Live monitor/injection still require your adapter.')

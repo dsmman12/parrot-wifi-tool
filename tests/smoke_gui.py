@@ -34,6 +34,42 @@ with patch.object(App, 'refresh'):
         error.assert_called_once()
     app.update_networks([{**item,'wps':'Unknown','wps_detected':False,'wps_locked':None}])
     assert str(app.wps_pixie_offer['state']) == 'disabled'
+    # Targeted scan shows clients; selected-client and whole-AP actions stay
+    # beside the live capture, and deauth completion does not end capture.
+    app.pending_close=False
+    app.cleanup_requested=False
+    app.bssid.set(item['bssid'])
+    app.channel.set('6')
+    app.authorized.set(True)
+    app.handshake_found=False
+    app.jobs={'capture':{'process':None,'cancel':False,'data':{'interface':'wlxTEST','bssid':item['bssid'],'channel':6}}}
+    app.update_clients([{'mac':'02:11:22:33:44:66','signal':'-40','packets':'15'}])
+    assert str(app.broadcast_button['state'])=='normal'
+    assert str(app.reconnect_button['state'])=='disabled'
+    app.client_tree.selection_set('02:11:22:33:44:66')
+    app.select_client()
+    assert str(app.reconnect_button['state'])=='normal'
+    with patch('app.messagebox.askokcancel',return_value=True),patch.object(app,'start') as start:
+        app.active('deauth',whole_network=True)
+        assert start.call_args.args[1]['whole_network'] is True
+        assert 'station' not in start.call_args.args[1]
+        app.active('deauth')
+        assert start.call_args.args[1]['station']=='02:11:22:33:44:66'
+    app.jobs['deauth']={'process':None,'cancel':False,'data':{'interface':'wlxTEST'},'related_capture':True}
+    with patch.object(app,'start') as start:
+        app.finish_job('deauth',0)
+        start.assert_not_called()
+        assert 'capture' in app.jobs
+        assert 'Still capturing' in app.capture_notice.get()
+    app.last_session=pathlib.Path('/capture/session')
+    app.jobs['deauth']={'process':None,'cancel':False,'data':{'interface':'wlxTEST'},'related_capture':True}
+    app.events.put(('worker',('deauth',{'event':'files','paths':['/deauth/session/output.log']})))
+    app.events.put(('worker',('capture',{'event':'handshake','bssid':item['bssid']})))
+    app.poll_events()
+    assert app.last_session==pathlib.Path('/capture/session')
+    assert app.handshake_found
+    assert str(app.broadcast_button['state'])=='disabled'
+    app.jobs.clear()
     # Closing waits for BOTH overlapping workers, then for verified restoration.
     def fake_start(action,data,cleanup=False):
         app.jobs[action]={'process':None,'cancel':False,'data':data,'cleanup':cleanup}
