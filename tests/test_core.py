@@ -20,6 +20,15 @@ class ValidationTests(unittest.TestCase):
         result = interfaces('phy#1\n Interface wlx123\n  addr 02:11:22:33:44:55\n  type monitor\nphy#0\n Interface wlan0\n  addr 02:aa:bb:cc:dd:ee\n  type managed\n')
         self.assertEqual([(d['name'], d['phy'], d['type']) for d in result], [('wlx123', 'phy#1', 'monitor'), ('wlan0', 'phy#0', 'managed')])
 
+    def test_unnamed_p2p_device_cannot_overwrite_real_card(self):
+        text='phy#1\n Interface wlx00c0cab2b465\n  wdev 0x100000001\n  addr 00:c0:ca:b2:b4:65\n  type managed\n Unnamed/non-netdev interface\n  wdev 0x100000002\n  addr 02:11:22:33:44:55\n  type P2P-device\nphy#0\n Unnamed/non-netdev interface\n  addr 02:aa:bb:cc:dd:ee\n  type P2P-device\n Interface wlan0\n  addr 02:22:33:44:55:66\n  type managed\n'
+        result=interfaces(text)
+        self.assertEqual(len(result),2)
+        self.assertEqual(result[0]['type'],'managed')
+        self.assertEqual(result[0]['mac'],'00:c0:ca:b2:b4:65')
+        self.assertEqual(result[0]['phy'],'phy#1')
+        self.assertEqual(result[1]['name'],'wlan0')
+
     def test_csv_hidden_ssids_and_station_section(self):
         csv = '\nBSSID, First time seen, Last time seen, channel, Speed, Privacy, Cipher, Authentication, Power, # beacons, # IV, LAN IP, ID-length, ESSID, Key\n02:11:22:33:44:55,x,x,6,54,WPA2,CCMP,PSK,-45,1,0,0,9,"Home, Lab",\n02:11:22:33:44:66,x,x,11,54,WPA2,CCMP,PSK,-50,1,0,0,0,,\n\nStation MAC, First time seen\n02:11:22:33:44:77,x,x,1,54,WPA2,CCMP,PSK,-40,1,0,0,4,Not an AP,\n'
         result = networks(csv)
