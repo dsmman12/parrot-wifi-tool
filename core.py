@@ -3,7 +3,7 @@ import csv
 import io
 import re
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 
 def clean(text):
@@ -85,3 +85,132 @@ def test_command(action, interface, data, session):
             args += ['-K', '1']
         return args
     raise ValueError('Unknown test.')
+
+
+def wps_advertisement(packet, linktype):
+    """Read WPS vendor IEs from beacon/probe-response frames, not client payloads."""
+    if linktype == 127:  # LINKTYPE_IEEE802_11_RADIOTAP
+        if len(packet) < 8 or packet[0] != 0:
+            return None
+        length = int.from_bytes(packet[2:4], 'little')
+        if length < 8 or length > len(packet):
+            return None
+        # Radiotap Flags follows optional TSFT, after all present-bit words.
+        first_present = int.from_bytes(packet[4:8], 'little')
+        present, cursor = first_present, 8
+        for _ in range(8):
+            if not present & 0x80000000:
+                break
+            if cursor + 4 > length:
+                return None
+            present = int.from_bytes(packet[cursor:cursor + 4], 'little')
+            cursor += 4
+        else:
+            return None
+        if first_present & 1:
+            cursor = (cursor + 7) // 8 * 8 + 8
+        flags = 0
+        if first_present & 2:
+            if cursor >= length:
+                return None
+            flags = packet[cursor]
+        if flags & 0x40:  # Bad FCS: don't infer WPS status from corrupt frames.
+            return None
+        packet = packet[length:]
+        if flags & 0x10:
+            if len(packet) < 4:
+                return None
+            packet = packet[:-4]
+    elif linktype != 105:  # LINKTYPE_IEEE802_11
+        return None
+    # Beacon/probe response, protocol version 0; reject protected/fragmented frames.
+    if len(packet) < 36 or packet[0] not in (0x80, 0x50) or packet[1] & 0x44 or packet[22] & 0x0f:
+        return None
+    try:
+        bssid = mac(':'.join(f'{b:02x}' for b in packet[16:22]))
+    except ValueError:
+        return None
+    payloads = []
+    pos = 36  # 24-byte management header + 12-byte fixed parameters
+    while pos + 2 <= len(packet):
+        kind, length = packet[pos:pos + 2]
+        pos += 2
+        if pos + length > len(packet):
+            return None
+        value = packet[pos:pos + length]
+        pos += length
+        if kind == 221 and value.startswith(b'\x00\x50\xf2\x04'):
+            payloads.append(value[4:])
+    if not payloads:
+        return None
+    # WPS attributes can span consecutive vendor IEs.
+    data = b''.join(payloads)
+    locked, pos = None, 0
+    while pos + 4 <= len(data):
+        tag = int.from_bytes(data[pos:pos + 2], 'big')
+        length = int.from_bytes(data[pos + 2:pos + 4], 'big')
+        pos += 4
+        if pos + length > len(data):
+            return None
+        value = data[pos:pos + length]
+        pos += length
+        if tag == 0x1057 and length == 1 and value[0] in (0, 1):
+            locked = bool(value[0])
+    if pos != len(data):
+        return None
+    return bssid, {'wps_detected': True, 'wps_locked': locked,
+                   'wps': 'Locked' if locked is True else 'Available' if locked is False else 'Detected (lock ?)'}
+
+
+class WpsObserver:
+    """Incrementally consume classic pcap, retrying incomplete records next tick."""
+    def __init__(self):
+        self.path = None
+        self.offset = 0
+        self.endian = None
+        self.linktype = None
+        self.items = {}
+
+    def update(self, path):
+        import struct
+        if path != self.path:
+            self.path, self.offset, self.endian, self.linktype = path, 0, None, None
+            self.items = {}
+        try:
+            with path.open('rb') as stream:
+                if self.offset == 0:
+                    header = stream.read(24)
+                    if len(header) < 24:
+                        return self.items
+                    if header[:4] in (b'\xd4\xc3\xb2\xa1', b'\x4d\x3c\xb2\xa1'):
+                        self.endian = '<'
+                    elif header[:4] in (b'\xa1\xb2\xc3\xd4', b'\xa1\xb2\x3c\x4d'):
+                        self.endian = '>'
+                    else:
+                        return self.items
+                    self.linktype = struct.unpack(self.endian + 'I', header[20:24])[0] & 0xffff
+                    self.offset = 24
+                stream.seek(self.offset)
+                for _ in range(10000):  # Bound work per UI update, even on busy radios.
+                    record = stream.read(16)
+                    if len(record) < 16:
+                        break
+                    length = struct.unpack(self.endian + 'I', record[8:12])[0]
+                    if length > 16 * 1024 * 1024:
+                        break
+                    packet = stream.read(length)
+                    if len(packet) != length:
+                        break
+                    self.offset += 16 + length
+                    result = wps_advertisement(packet, self.linktype)
+                    if result:
+                        bssid, info = result
+                        self.items[bssid] = info
+        except FileNotFoundError:
+            pass
+        return self.items
+
+
+def merge_wps(items, observations):
+    return [{**item, **observations.get(item['bssid'],
+             {'wps': 'Unknown', 'wps_detected': False, 'wps_locked': None})} for item in items]

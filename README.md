@@ -1,6 +1,6 @@
 # Parrot Wi-Fi Tool
 
-A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.1.0** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
+A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.2.0** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
 
 ## Install on Parrot
 
@@ -29,7 +29,9 @@ If your desktop lacks a polkit authentication agent, pkexec prompts may fail. La
 - Adapter dropdown: discovers current interface names, mode, MAC and sysfs driver.
 - Enable/verify monitor mode, switch back to managed mode, and restore the saved original state.
 - Random locally administered MAC, custom unicast MAC, restore saved MAC.
-- Twenty-second network survey with selectable SSID, BSSID, channel, security and signal table.
+- Twenty-second network survey with live SSID, BSSID, channel, security, signal and **WPS** columns (updates about every two seconds).
+- WPS advertisements are read passively from Airodump capture packets: **Available**, **Locked**, **Detected (lock ?)**, or **Unknown**. No observed advertisement means unknown, not confirmed disabled.
+- Selecting a WPS-advertising router offers **Test WPS PIN** and **Test Pixie Dust** directly below the network list. Finish/stop the scan before testing. Offers are disabled for a reported lock and still require target authorization and active-test confirmation.
 - Targeted WPA/WPA2 capture with a 5–3,600 second limit; Stop flushes files.
 - A folder picker and session export, including packet captures, CSV and tool output.
 - Local handshake recognition using Aircrack-ng with an empty wordlist. This checks the capture, not a password. Inconclusive tool output is explicitly labeled.
@@ -42,7 +44,7 @@ If your desktop lacks a polkit authentication agent, pkexec prompts may fail. La
 
 1. Plug in your USB Wi-Fi adapter and open the app. The first `wlx…` card is selected if present; always verify the dropdown.
 2. Open **Adapter controls → Enable monitor mode**. Approve the administrator prompt. Confirm that mode changes to `monitor` in the adapter header/log.
-3. Open **Survey & capture → Scan networks**. After 20 seconds, select your network. This fills the AP BSSID and channel.
+3. Open **Survey & capture → Scan networks**. Select your network as rows arrive. This fills the AP BSSID and channel; WPS status updates during the scan. A router advertising WPS shows test options below the list. Finish/stop the scan before testing; a reported WPS lock disables the offered tests.
 4. Confirm you own or have permission to test that target. Choose a save folder, set the capture duration, and select **Start targeted capture**.
 5. Reconnect one of your own devices to the network. Stop capture, then **Save latest session**. **Check handshake file…** opens a file picker; select the `.cap` and keep the correct AP BSSID selected.
 6. Before returning the card to everyday use, stop all tasks and select **Restore adapter completely**. Wi-Fi may need to be reconnected.
@@ -54,6 +56,8 @@ For an active test, select the correct target/channel and open **Active tests & 
 Running tools write to a fresh, fixed session folder under `/var/lib/parrot-wifi-tool/sessions/`. After the process finishes, file ownership is assigned to your user so you can export without root access. Session folders remain root-owned and group-readable/traversable; files are mode 600. **Save latest session** copies the most recently completed session into a timestamped subfolder of your chosen destination. An existing export is not overwritten.
 
 Captures/logs can contain device identifiers, traffic and recovered WPS credentials. Keep them private. They are ignored by Git and are never uploaded by this app. Sessions remain on disk until you remove them yourself. No automatic cleanup deletes your captures.
+
+The survey saves packet captures as well as CSV so WPS vendor information elements can be decoded without another radio scanner. The parser supports classic pcap with raw 802.11 or radiotap headers, skips incomplete live records until the next update, and ignores corrupt/truncated advertisements. Unsupported capture formats leave WPS status unknown. WPS availability does not establish PIN support, vulnerability, or password recoverability. Advertisements may change after the scan; the displayed lock status is an observation from that scan.
 
 ## Adapter and protocol limitations
 
@@ -88,7 +92,7 @@ bash -n install.sh uninstall.sh
 xvfb-run -a python3 tests/smoke_gui.py
 ```
 
-Tests cover MAC validation, target bounds, network parsing, handshake result interpretation, scoped command construction, child-process cancellation/timeouts, WPS lock handling and failed monitor-mode rollback. The GUI smoke test exercises real Tk widgets without a radio. **Live adapter/radio behavior must be validated on your Parrot machine.**
+Tests cover WPS advertisement parsing, live partial-packet reads, WPS lock updates, WPS offer behavior, MAC validation, target bounds, network parsing, handshake result interpretation, scoped command construction, child-process cancellation/timeouts, WPS lock handling and failed monitor-mode rollback. The GUI smoke test exercises real Tk widgets without a radio. **Live adapter/radio behavior must be validated on your Parrot machine.**
 
 Tool references: [Aircrack-ng documentation](https://www.aircrack-ng.org/documentation.html), [Airodump-ng](https://www.aircrack-ng.org/doku.php?id=airodump-ng), [Aireplay-ng](https://www.aircrack-ng.org/doku.php?id=aireplay-ng), [Reaver/Wash upstream](https://github.com/t6x/reaver-wps-fork-t6x).
 

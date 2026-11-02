@@ -17,7 +17,7 @@ import time
 
 # Under python -I, explicitly load only the installed root-owned code directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from core import clean, interfaces, mac, networks, number, test_command
+from core import clean, interfaces, mac, networks, number, test_command, WpsObserver, merge_wps
 
 ROOT = Path('/var/lib/parrot-wifi-tool')
 STOP = threading.Event()
@@ -99,13 +99,14 @@ def listen():
     finally:
         STOP.set()
 
-def run_stream(args, seconds, session, stop_on_lock=False):
+def run_stream(args, seconds, session, stop_on_lock=False, on_tick=None):
     emit('log', text='Running: ' + ' '.join(args))
     p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          start_new_session=True, env=ENV, cwd=session)
     selector = selectors.DefaultSelector()
     selector.register(p.stdout, selectors.EVENT_READ)
     deadline = time.monotonic() + seconds
+    next_tick = time.monotonic()
     interrupted = False
     pending = b''
     try:
@@ -114,6 +115,9 @@ def run_stream(args, seconds, session, stop_on_lock=False):
                 if STOP.is_set() or time.monotonic() >= deadline:
                     interrupted = True
                     break
+                if on_tick and time.monotonic() >= next_tick:
+                    on_tick()
+                    next_tick = time.monotonic() + 2
                 ready = selector.select(0.2)
                 for key, _ in ready:
                     chunk = os.read(key.fileobj.fileno(), 4096)
@@ -256,7 +260,7 @@ def execute(resources):
     session.mkdir(mode=0o700)
     emit('session', path=str(session))
     if action == 'survey':
-        args = ['airodump-ng', '--write', str(session / 'survey'), '--output-format', 'csv', '--write-interval', '1', name]
+        args = ['airodump-ng', '--wps', '--beacons', '--write', str(session / 'survey'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
     elif action == 'capture':
         args = ['airodump-ng', '--bssid', bssid, '--channel', channel, '--write', str(session / 'capture'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
     elif action == 'wash':
@@ -269,17 +273,24 @@ def execute(resources):
         command(['iw', 'dev', name, 'set', 'channel', channel])
     if action == 'capture':
         cap_scope.write_text(json.dumps({'bssid': bssid, 'channel': channel}))
+    observer = WpsObserver()
+    def publish_survey():
+        csv_files = sorted(session.glob('*.csv'))
+        cap_files = sorted(session.glob('*.cap'))
+        observations = observer.update(cap_files[0]) if cap_files else observer.items
+        if csv_files:
+            items = merge_wps(networks(csv_files[0].read_text(errors='replace')), observations)
+            emit('networks', items=items)
     threading.Thread(target=listen, daemon=True).start()
     try:
-        run_stream(args, seconds, session, action in ('wps', 'pixie'))
+        run_stream(args, seconds, session, action in ('wps', 'pixie'),
+                   on_tick=publish_survey if action == 'survey' else None)
     finally:
         if action == 'capture':
             cap_scope.unlink(missing_ok=True)
-        handoff_files(session, uid, gid)
         if action == 'survey':
-            csv_files = list(session.glob('*.csv'))
-            if csv_files:
-                emit('networks', items=networks(csv_files[0].read_text(errors='replace')))
+            publish_survey()
+        handoff_files(session, uid, gid)
         emit('files', paths=[str(p) for p in session.iterdir() if p.is_file()])
 
 if __name__ == '__main__':

@@ -36,6 +36,8 @@ class App(tk.Tk):
         self.events = queue.Queue()
         self.jobs = {}
         self.devices = []
+        self.network_rows = {}
+        self.wps_notice = tk.StringVar(value="Select a network to see WPS options.")
         self.last_session = None
         self.last_caps = []
         self.pending_close = False
@@ -51,6 +53,7 @@ class App(tk.Tk):
         self.authorized = tk.BooleanVar(value=False)
         self.export_folder = tk.StringVar(value=str(Path.home() / 'WiFi-Captures'))
         self.build_ui()
+        self.bssid.trace_add("write", lambda *_: self.update_wps_offer())
         self.protocol('WM_DELETE_WINDOW', self.close_app)
         self.after(100, self.poll_events)
         self.refresh()
@@ -91,13 +94,20 @@ class App(tk.Tk):
         toolbar.pack(fill='x')
         ttk.Button(toolbar, text='Scan networks · 20 sec', command=lambda: self.start('survey', {'seconds': 20})).pack(side='left')
         ttk.Label(toolbar, text='Select a row to set the target below.').pack(side='left', padx=12)
-        cols = ('ssid', 'bssid', 'channel', 'security', 'signal')
+        cols = ('ssid', 'bssid', 'channel', 'security', 'signal', 'wps')
         self.tree = ttk.Treeview(capture, columns=cols, show='headings', height=6, selectmode='browse')
-        for column, width in zip(cols, (240, 175, 70, 110, 70)):
+        for column, width in zip(cols, (210, 170, 65, 100, 65, 155)):
             self.tree.heading(column, text=column.upper())
             self.tree.column(column, width=width)
         self.tree.pack(fill='both', expand=True, pady=10)
         self.tree.bind('<<TreeviewSelect>>', self.select_network)
+        offer = ttk.Frame(capture)
+        offer.pack(fill='x', pady=3)
+        ttk.Label(offer, textvariable=self.wps_notice, wraplength=520).pack(side='left', fill='x', expand=True)
+        self.wps_pin_offer = ttk.Button(offer, text='Test WPS PIN', state='disabled', command=lambda: self.active('wps'))
+        self.wps_pin_offer.pack(side='right', padx=4)
+        self.wps_pixie_offer = ttk.Button(offer, text='Test Pixie Dust', state='disabled', command=lambda: self.active('pixie'))
+        self.wps_pixie_offer.pack(side='right', padx=4)
         row = ttk.Frame(capture)
         row.pack(fill='x', pady=4)
         ttk.Label(row, text='Capture limit (seconds)').pack(side='left')
@@ -201,9 +211,47 @@ class App(tk.Tk):
         selected = self.tree.selection()
         if selected:
             values = self.tree.item(selected[0], 'values')
+            changed = self.bssid.get() != values[1] or self.channel.get() != values[2]
             self.bssid.set(values[1])
             self.channel.set(values[2])
-            self.authorized.set(False)
+            if changed:
+                self.authorized.set(False)
+            self.update_wps_offer()
+
+    def update_networks(self, items):
+        self.network_rows = {item['bssid']: item for item in items}
+        old = set(self.tree.get_children())
+        for item in items:
+            key = item['bssid']
+            values = [item.get(k, 'Unknown') for k in ('ssid', 'bssid', 'channel', 'security', 'signal', 'wps')]
+            if key in old:
+                self.tree.item(key, values=values)
+                old.remove(key)
+            else:
+                self.tree.insert('', 'end', iid=key, values=values)
+        for key in old:
+            self.tree.delete(key)
+        self.update_wps_offer()
+        self.status.set(f"Survey: {len(items)} networks · WPS advertised: {sum(bool(i.get('wps_detected')) for i in items)}")
+
+    def update_wps_offer(self):
+        item = self.network_rows.get(self.bssid.get().strip().lower(), {})
+        detected = item.get('wps_detected', False)
+        locked = item.get('wps_locked') is True
+        if locked:
+            text = 'WPS advertised, but router reports locked. Testing unavailable.'
+        elif detected:
+            text = 'WPS advertised — test options available; vulnerability is not confirmed.'
+            if item.get('wps_locked') is None:
+                text = 'WPS advertised; lock status unknown. Test options available.'
+            if self.jobs:
+                text += ' Stop or finish the scan first.'
+        else:
+            text = 'WPS unknown: no WPS advertisement observed for this selection.'
+        self.wps_notice.set(text)
+        state = 'normal' if detected and not locked and not self.jobs else 'disabled'
+        self.wps_pin_offer.configure(state=state)
+        self.wps_pixie_offer.configure(state=state)
 
     def capture(self):
         try:
@@ -216,6 +264,8 @@ class App(tk.Tk):
     def active(self, action):
         try:
             data = self.target_data()
+            if action in ('wps', 'pixie') and self.network_rows.get(data['bssid'], {}).get('wps_locked') is True:
+                raise ValueError('This router advertised a WPS lock. Rescan after it is unlocked.')
             data['seconds'] = 120 if action in ('wps', 'pixie') else 25
             if action == 'deauth':
                 data.update(station=mac(self.station.get()), count=number(self.count.get(), 1, 5))
@@ -250,7 +300,10 @@ class App(tk.Tk):
             messagebox.showerror('Missing dependencies', ', '.join(missing) + '\nRun install.sh.')
             return
         data = {**data, 'interface': name}
+        if action == 'survey':
+            self.update_networks([])
         self.jobs[action] = {'process': None, 'cancel': False, 'data': data}
+        self.update_wps_offer()
         self.adapter_box.configure(state='disabled')
         self.status.set('Running: ' + ', '.join(self.jobs))
         self.write(f'[{action}] Requesting administrator authorization…')
@@ -324,10 +377,7 @@ class App(tk.Tk):
                             self.last_caps = [p for p in paths if p.suffix == '.cap']
                             self.write('Files ready. Use Save latest session to export.')
                     elif event_type == 'networks':
-                        self.tree.delete(*self.tree.get_children())
-                        for item in event['items']:
-                            self.tree.insert('', 'end', values=[item[k] for k in ('ssid', 'bssid', 'channel', 'security', 'signal')])
-                        self.write(f"Survey found {len(event['items'])} access points.")
+                        self.update_networks(event['items'])
                 elif kind == 'finished':
                     action, code = data
                     job = self.jobs.pop(action, None)
@@ -335,6 +385,7 @@ class App(tk.Tk):
                         job['process'].stdin.close()
                     self.write(f'[{action}] Finished (exit {code}).' + (' Authorization cancelled or denied.' if code in (126, 127) else ''))
                     self.status.set('Running: ' + ', '.join(self.jobs) if self.jobs else 'Ready')
+                    self.update_wps_offer()
                     if not self.jobs:
                         self.adapter_box.configure(state='readonly')
                         self.refresh()
