@@ -1,6 +1,6 @@
 # Parrot Wi-Fi Tool
 
-A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.4.0** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
+A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.4.1** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
 
 ## Install on Parrot
 
@@ -49,8 +49,8 @@ Start using `parrot-wifi-tool` (or its application-menu shortcut, which opens a 
 ## First use
 
 1. Select your USB card, open **1 · Networks**, and click **Scan networks**.
-2. Select your router and confirm you own/have permission to test it.
-3. Click **Scan selected router / capture**. The app opens **2 · Clients & handshake**, enters monitor mode and locks to the selected AP/channel. Client discovery and capture run together.
+2. Click your router as soon as it appears. The app stops the broad survey early and immediately opens **2 · Clients & handshake** with your selected router. Wait for adapter restoration to finish.
+3. Confirm you own/have permission to test it, then click **Start client scan & capture**. The app enters monitor mode and locks to the selected AP/channel. Client discovery and capture run together.
 4. Select a discovered client and click **Deauth selected client**, or click **Deauth all clients on selected AP** for a bounded AP-wide burst. Confirm the active test. These actions are available while capture is running; deauth does not stop the capture.
 5. Wait for **HANDSHAKE CAPTURED**. Capture stops automatically when Airodump announces a handshake for your selected BSSID, then the adapter is restored. The default limit is 300 seconds; you can change it before starting. If nothing is captured, the timer/Stop still preserve the files and report that no handshake was confirmed.
 6. Click **Choose save folder…**, then **Save latest session**. The `.cap`, CSV, log, and handshake metadata are retained. **Check handshake file…** provides an additional offline Aircrack check.
