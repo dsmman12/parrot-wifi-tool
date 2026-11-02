@@ -10,7 +10,21 @@ jobs:
           python3 -m py_compile app.py worker.py core.py
           python3 -m unittest discover -s tests -v
           bash -n install.sh uninstall.sh
-      - name: Install desktop test dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+      - name: Install desktop and Wi-Fi test dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb aircrack-ng reaver pixiewps iw iproute2
       - name: Desktop smoke test
         run: xvfb-run -a python3 tests/smoke_gui.py
+      - name: Real toolchain and upstream capture replay
+        run: python3 tests/toolchain_check.py
+  debian:
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - name: Install Debian dependencies
+        run: apt-get update && apt-get install -y git ca-certificates python3 python3-tk xvfb aircrack-ng reaver pixiewps iw iproute2
+      - uses: actions/checkout@v4
+      - name: Debian unit, desktop and real toolchain checks
+        run: |
+          python3 -m unittest discover -s tests -v
+          xvfb-run -a python3 tests/smoke_gui.py
+          python3 tests/toolchain_check.py
