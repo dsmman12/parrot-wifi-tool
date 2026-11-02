@@ -54,6 +54,7 @@ class App(tk.Tk):
         self.handshake_found = False
         self.capture_notice = tk.StringVar(value='Select your router, then start its client scan and capture.')
         self.pending_close = False
+        self.pending_capture = None
         self.adapter = tk.StringVar()
         self.status = tk.StringVar(value='Ready')
         self.bssid = tk.StringVar()
@@ -328,8 +329,21 @@ class App(tk.Tk):
         try:
             data = self.target_data()
             data['seconds'] = number(self.seconds.get(), 5, 3600)
-            self.start('capture', data)
+            data['interface'] = self.adapter.get()
+            if self.pending_close:
+                raise ValueError('The app is closing. Cancel closing before starting a scan.')
+            if self.cleanup_requested or (self.jobs and set(self.jobs) <= {'survey', 'restore'}):
+                self.pending_capture = data
+                self.capture_notice.set('Client scan queued — waiting for network scan / adapter restoration to finish. It will start automatically.')
+                self.status.set('Client scan queued')
+                if 'survey' in self.jobs:
+                    self.stop('survey')
+                return
+            self.pending_capture = None
+            if not self.start('capture', data):
+                self.capture_notice.set('Client scan did not start. Check the message and operation log below.')
         except ValueError as exc:
+            self.capture_notice.set('Client scan did not start: ' + str(exc))
             messagebox.showerror('Capture', str(exc))
 
     def active(self, action, whole_network=False):
@@ -448,6 +462,8 @@ class App(tk.Tk):
         self.cleanup_requested = False
         self.cleanup_attempted.clear()
         if self.cleanup_failed or self.dirty_adapters:
+            self.pending_capture = None
+            self.capture_notice.set('Client scan cannot start until adapter restoration succeeds. Press Stop All to retry restoration.')
             self.pending_close = False
             self.status.set('Restoration needs attention — see log')
             messagebox.showerror('Restoration incomplete', 'Network restoration was not verified. The app will stay open. Reconnect a missing card or approve administrator access, then press Stop All to retry. Saved recovery state is retained.')
@@ -455,11 +471,16 @@ class App(tk.Tk):
         self.status.set('Network settings restored')
         if self.pending_close:
             self.destroy()
+        elif self.pending_capture is not None:
+            data, self.pending_capture = self.pending_capture, None
+            if not self.start('capture', data):
+                self.capture_notice.set('Queued client scan could not start. Check the message and log below.')
         else:
             self.adapter_box.configure(state='readonly')
             self.refresh()
 
     def stop_all(self):
+        self.pending_capture = None
         # Never interrupt an in-progress restore with another Stop click.
         for action, job in list(self.jobs.items()):
             if not job.get('cleanup'):
@@ -478,6 +499,11 @@ class App(tk.Tk):
                 pass
         if code != 0 and job and not job.get('worker_error'):
             self.write('If sudo reports that a password is required, restart with parrot-wifi-tool to authorize the session.')
+        if action == 'capture' and code != 0:
+            reason = (job or {}).get('error_text') or 'Worker exited before completing. See the log below; if sudo requires a password, reopen using parrot-wifi-tool.'
+            self.capture_notice.set('Client scan failed: ' + reason)
+            if not (job or {}).get('worker_error'):
+                messagebox.showerror('Client scan failed', reason)
         self.write(f'[{action}] Finished (exit {code}).' + (' Authorization cancelled or denied.' if code in (126, 127) else ''))
         if job and job.get('cleanup') and (code != 0 or job['data']['interface'] in self.dirty_adapters):
             self.cleanup_failed = True
@@ -538,6 +564,10 @@ class App(tk.Tk):
                     elif event_type in ('log', 'error'):
                         if event_type == 'error' and action in self.jobs:
                             self.jobs[action]['worker_error'] = True
+                            self.jobs[action]['error_text'] = event.get('text', 'Worker failed.')
+                        if event_type == 'error' and action == 'capture':
+                            self.capture_notice.set('Client scan failed: ' + event.get('text', 'Worker failed.'))
+                            messagebox.showerror('Client scan failed', event.get('text', 'Worker failed.'))
                         self.write(f'[{action}] ' + event.get('text', ''))
                     elif event_type == 'session':
                         # Do not replace latest completed session until files are finalized.
@@ -619,6 +649,7 @@ class App(tk.Tk):
         self.background(work)
 
     def close_app(self):
+        self.pending_capture = None
         if self.jobs and not self.cleanup_requested:
             if not messagebox.askokcancel('Stop and restore before exit', 'Stop operations, restore changed adapters, and close? Capture files will be kept.'):
                 return
