@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import secrets
 import selectors
 import shutil
@@ -37,6 +38,17 @@ def command(args, check=True):
 
 def devices():
     return interfaces(command(['iw', 'dev']).stdout)
+
+def survey_bands(info):
+    phy = info.get('phy', '').replace('#', '')
+    if not re.fullmatch(r'phy[0-9]+', phy):
+        return 'bg'
+    capabilities = command(['iw', 'phy', phy, 'info'], False)
+    if capabilities.returncode == 0:
+        for line in capabilities.stdout.splitlines():
+            if re.search(r'\b5[0-9]{3} MHz\b', line) and 'disabled' not in line.lower():
+                return 'abg'
+    return 'bg'
 
 def device(name):
     if not name or '/' in name or len(name) > 15:
@@ -258,7 +270,7 @@ def execute(resources):
     session.mkdir(mode=0o700)
     emit('session', path=str(session))
     if action == 'survey':
-        args = ['airodump-ng', '--wps', '--beacons', '--write', str(session / 'survey'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
+        args = ['airodump-ng', '--band', survey_bands(info), '--wps', '--beacons', '--write', str(session / 'survey'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
     elif action == 'capture':
         args = ['airodump-ng', '--bssid', bssid, '--channel', channel, '--write', str(session / 'capture'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
     elif action == 'wash':

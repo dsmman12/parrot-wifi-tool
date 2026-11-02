@@ -29,6 +29,7 @@ If your desktop lacks a polkit authentication agent, pkexec prompts may fail. La
 - Adapter dropdown: discovers current interface names, mode, MAC and sysfs driver.
 - Enable/verify monitor mode, switch back to managed mode, and restore the saved original state.
 - Random locally administered MAC, custom unicast MAC, restore saved MAC.
+- Automatic 2.4/5 GHz survey on dual-band radios (falls back to 2.4 GHz when enabled 5 GHz channels are not reported by iw).
 - Twenty-second network survey with live SSID, BSSID, channel, security, signal and **WPS** columns (updates about every two seconds).
 - WPS advertisements are read passively from Airodump capture packets: **Available**, **Locked**, **Detected (lock ?)**, or **Unknown**. No observed advertisement means unknown, not confirmed disabled.
 - Selecting a WPS-advertising router offers **Test WPS PIN** and **Test Pixie Dust** directly below the network list. Finish/stop the scan before testing. Offers are disabled for a reported lock and still require target authorization and active-test confirmation.
