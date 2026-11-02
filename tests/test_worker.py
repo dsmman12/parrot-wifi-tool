@@ -37,6 +37,11 @@ class ProcessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
             worker.run_stream([sys.executable, '-c', 'raise SystemExit(4)'], 5, pathlib.Path(folder))
 
+    def test_failure_contains_actual_tool_error(self):
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'adapter is not ready'):
+                worker.run_stream([sys.executable, '-u', '-c', 'print("adapter is not ready"); raise SystemExit(3)'], 5, pathlib.Path(folder))
+
     def test_reported_wps_lock_stops_process(self):
         with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()) as output:
             worker.run_stream([sys.executable, '-u', '-c', 'import time; print("WARNING: Detected AP rate limiting"); time.sleep(60)'], 10, pathlib.Path(folder), True)

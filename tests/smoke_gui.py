@@ -63,6 +63,27 @@ with patch.object(App, 'refresh'):
     with patch.object(app,'request_cleanup'):
         app.stop_all()
         assert app.pending_capture is None
+    # Start confirms permission in place, instead of requiring a separate checkbox.
+    app.authorized.set(False)
+    with patch('app.messagebox.askokcancel',return_value=True) as confirm, patch.object(app,'start',return_value=True) as start:
+        app.capture()
+        confirm.assert_called_once()
+        assert app.authorized.get()
+        assert start.call_args.args[0]=='capture'
+    app.authorized.set(False)
+    with patch('app.messagebox.askokcancel',return_value=False), patch.object(app,'start') as start:
+        app.capture()
+        start.assert_not_called()
+    app.authorized.set(True)
+    # A manually requested restore must also release a queued capture.
+    app.jobs={'restore':{'process':None,'cancel':False,'data':{'interface':'wlxTEST'}}}
+    app.cleanup_requested=False
+    with patch.object(app,'start',return_value=True) as start:
+        app.capture()
+        start.assert_not_called()
+        app.finish_job('restore',0)
+        assert start.call_args.args[0]=='capture'
+        assert app.pending_capture is None
     # Targeted scan shows clients; selected-client and whole-AP actions stay
     # beside the live capture, and deauth completion does not end capture.
     app.pending_close=False
