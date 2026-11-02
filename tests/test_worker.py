@@ -49,12 +49,22 @@ class ProcessTests(unittest.TestCase):
             fake_device = dict(name='wlan0', phy='phy#1', type='monitor', mac='02:11:22:33:44:55')
             old_mask = os.umask(0o077)
             try:
-                with patch.object(worker, 'ROOT', root), patch.object(worker.os, 'geteuid', return_value=0), patch.dict(worker.os.environ, {'PKEXEC_UID':'1000'}), patch.object(worker.pwd, 'getpwuid') as user, patch.object(worker, 'device', return_value=fake_device), patch.object(worker.threading, 'Thread'), patch.object(worker, 'run_stream'), patch.object(worker, 'handoff_files'), patch.object(worker, 'emit'), patch.object(sys, 'argv', ['worker.py', 'survey', '{"interface":"wlan0","seconds":5}']):
+                with patch.object(worker, 'ROOT', root), patch.object(worker.os, 'geteuid', return_value=0), patch.dict(worker.os.environ, {'PKEXEC_UID':'1000'}), patch.object(worker.pwd, 'getpwuid') as user, patch.object(worker, 'device', return_value=fake_device), patch.object(worker.threading, 'Thread'), patch.object(worker, 'run_stream'), patch.object(worker, 'command'), patch.object(worker, 'handoff_files'), patch.object(worker, 'emit'), patch.object(sys, 'argv', ['worker.py', 'survey', '{"interface":"wlan0","seconds":5}']):
                     user.return_value.pw_gid = 1000
                     worker.main()
                 self.assertEqual(stat.S_IMODE((root / 'sessions').stat().st_mode), 0o711)
             finally:
                 os.umask(old_mask)
+
+    def test_scan_uses_5ghz_only_when_the_phy_reports_it(self):
+        from types import SimpleNamespace
+        with patch.object(worker,'command',return_value=SimpleNamespace(returncode=0,stdout='* 2412 MHz [1]\n* 5180 MHz [36] (20 dBm)')):
+            self.assertEqual(worker.survey_bands({'phy':'phy#1'}),'abg')
+        with patch.object(worker,'command',return_value=SimpleNamespace(returncode=0,stdout='* 2412 MHz [1]\n* 5180 MHz [36] (disabled)')):
+            self.assertEqual(worker.survey_bands({'phy':'phy#1'}),'bg')
+        with patch.object(worker,'command') as command:
+            self.assertEqual(worker.survey_bands({'phy':'invalid'}),'bg')
+            command.assert_not_called()
 
     def test_custom_mac_is_not_immediately_given_back_to_networkmanager(self):
         with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
