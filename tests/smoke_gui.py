@@ -13,6 +13,8 @@ with patch.object(App, 'refresh'):
     app.update_networks([item])
     app.tree.selection_set(item['bssid'])
     app.select_network()
+    assert app.tabs.select() == str(app.target_capture_tab)
+    assert 'Selected Lab' in app.capture_notice.get()
     assert app.bssid.get() == item['bssid']
     assert app.channel.get() == '6'
     assert app.authorized.get() is False
@@ -25,6 +27,10 @@ with patch.object(App, 'refresh'):
     app.update_wps_offer()
     assert str(app.wps_pin_offer['state']) == 'disabled'
     assert 'finish the scan' in app.wps_notice.get()
+    with patch.object(app, 'stop') as stop:
+        app.select_network()
+        stop.assert_called_once_with('survey')
+        assert app.tabs.select() == str(app.target_capture_tab)
     app.jobs.clear()
     app.update_networks([{**item,'wps':'Locked','wps_locked':True}])
     assert str(app.wps_pin_offer['state']) == 'disabled'
