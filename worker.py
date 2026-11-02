@@ -64,7 +64,9 @@ def state_path(name):
 def remember(name):
     path = state_path(name)
     if path.exists():
-        return json.loads(path.read_text())
+        state = json.loads(path.read_text())
+        emit('state_saved', interface=name)
+        return state
     info = device(name)
     nm = command(['nmcli', '-g', 'GENERAL.NM-MANAGED', 'device', 'show', name], False) if shutil.which('nmcli', path=ENV['PATH']) else None
     link = json.loads(command(['ip', '-j', 'link', 'show', 'dev', name]).stdout)[0]
@@ -73,6 +75,7 @@ def remember(name):
     tmp = path.with_suffix('.tmp')
     tmp.write_text(json.dumps(state))
     os.replace(tmp, path)
+    emit('state_saved', interface=name)
     return state
 
 def unmanage(name):
@@ -89,7 +92,9 @@ def set_mode(name, mode):
 def restore(name):
     path = state_path(name)
     if not path.exists():
-        raise ValueError('No saved adapter state. Nothing to restore.')
+        emit('log', text='No pending adapter changes; already restored.')
+        emit('restored', interface=name)
+        return
     state = json.loads(path.read_text())
     unmanage(name)
     command(['ip', 'link', 'set', 'dev', name, 'down'])
@@ -102,6 +107,7 @@ def restore(name):
     if actual['type'] != state['type'] or actual['mac'].lower() != state['mac'].lower():
         raise RuntimeError('Restoration could not be verified; saved state retained.')
     path.unlink()
+    emit('restored', interface=name)
     emit('log', text='Original mode, MAC, link state and known NetworkManager setting restored. Reconnect Wi-Fi if needed.')
 
 def listen():
@@ -186,7 +192,8 @@ def execute(resources):
     if os.geteuid() != 0:
         raise RuntimeError('Use the installed desktop app; the worker requires administrator authorization.')
     os.umask(0o077)
-    ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ROOT.mkdir(mode=0o711, parents=True, exist_ok=True)
+    os.chmod(ROOT, 0o711)
     # PKEXEC_UID is supplied by pkexec, not the GUI request.
     uid = int(os.environ.get('PKEXEC_UID', '-1'))
     if uid <= 0:
@@ -245,8 +252,6 @@ def execute(resources):
                 emit('log', text=f'Recovery needs attention: {recovery}. Use Restore adapter.')
             raise
         return
-    if info['type'] != 'monitor':
-        raise ValueError('Enable monitor mode first.')
     seconds = number(data.get('seconds', 30), 5, 3600 if action == 'capture' else 300)
     channel = None
     bssid = None
@@ -261,47 +266,95 @@ def execute(resources):
             scope = json.loads(cap_scope.read_text())
             if scope != {'bssid': bssid, 'channel': channel}:
                 raise ValueError('Deauth target must match the running capture and channel.')
-    session_root = ROOT / 'sessions'
-    session_root.mkdir(mode=0o711, exist_ok=True)
-    os.chmod(session_root, 0o711)  # mkdir mode is restricted by the worker's umask.
-    # Allow only traversal to private group-readable session folders, not listing.
-    os.chmod(ROOT, 0o711)
-    session = session_root / (time.strftime('%Y%m%d-%H%M%S-') + secrets.token_hex(6))
-    session.mkdir(mode=0o700)
-    emit('session', path=str(session))
-    if action == 'survey':
-        args = ['airodump-ng', '--band', survey_bands(info), '--wps', '--beacons', '--write', str(session / 'survey'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
-    elif action == 'capture':
-        args = ['airodump-ng', '--bssid', bssid, '--channel', channel, '--write', str(session / 'capture'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
-    elif action == 'wash':
-        args = ['wash', '-i', name]
-    elif action == 'injection':
-        args = ['aireplay-ng', '--test', '-a', bssid, name]
-    else:
-        args = test_command(action, name, data, session)
-    if channel:
-        command(['iw', 'dev', name, 'set', 'channel', channel])
-    if action == 'capture':
-        cap_scope.write_text(json.dumps({'bssid': bssid, 'channel': channel}))
-    observer = WpsObserver()
-    def publish_survey():
-        csv_files = sorted(session.glob('*.csv'))
-        cap_files = sorted(session.glob('*.cap'))
-        observations = observer.update(cap_files[0]) if cap_files else observer.items
-        if csv_files:
-            items = merge_wps(networks(csv_files[0].read_text(errors='replace')), observations)
-            emit('networks', items=items)
+    radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds, channel, bssid)
+
+def cleanup_radio(name, lock):
+    # Capture and directed deauth share a radio. Only the last worker restores.
+    fcntl.flock(lock, fcntl.LOCK_UN)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        emit('log', text='Restoration deferred until the other operation on this radio stops.')
+        return False
+    restore(name)
+    return True
+
+def prepare_radio(name, info):
+    # Shared capture/deauth workers must not race snapshot creation or mode setup.
+    path = ROOT / (info['phy'].replace('#', '') + '-setup.lock')
+    with path.open('a') as setup_lock:
+        deadline = time.monotonic() + 60
+        while True:
+            if STOP.is_set():
+                return False
+            try:
+                fcntl.flock(setup_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Timed out waiting for adapter setup.')
+                time.sleep(0.05)
+        remember(name)
+        if device(name)['type'] != 'monitor':
+            unmanage(name)
+            set_mode(name, 'monitor')
+    return True
+
+def radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds, channel, bssid):
+    session = None
+    publish_survey = None
+    failed = True
     threading.Thread(target=listen, daemon=True).start()
     try:
+        if not prepare_radio(name, info):
+            return
+        session_root = ROOT / 'sessions'
+        session_root.mkdir(mode=0o711, exist_ok=True)
+        os.chmod(session_root, 0o711)  # mkdir mode is restricted by the worker's umask.
+        # Allow only traversal to private group-readable session folders, not listing.
+        os.chmod(ROOT, 0o711)
+        session = session_root / (time.strftime('%Y%m%d-%H%M%S-') + secrets.token_hex(6))
+        session.mkdir(mode=0o700)
+        emit('session', path=str(session))
+        if action == 'survey':
+            args = ['airodump-ng', '--band', survey_bands(info), '--wps', '--beacons', '--write', str(session / 'survey'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
+        elif action == 'capture':
+            args = ['airodump-ng', '--bssid', bssid, '--channel', channel, '--write', str(session / 'capture'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
+        elif action == 'wash':
+            args = ['wash', '-i', name]
+        elif action == 'injection':
+            args = ['aireplay-ng', '--test', '-a', bssid, name]
+        else:
+            args = test_command(action, name, data, session)
+        if channel:
+            command(['iw', 'dev', name, 'set', 'channel', channel])
+        if action == 'capture':
+            cap_scope.write_text(json.dumps({'bssid': bssid, 'channel': channel}))
+        observer = WpsObserver()
+        def publish_survey():
+            csv_files = sorted(session.glob('*.csv'))
+            cap_files = sorted(session.glob('*.cap'))
+            observations = observer.update(cap_files[0]) if cap_files else observer.items
+            if csv_files:
+                items = merge_wps(networks(csv_files[0].read_text(errors='replace')), observations)
+                emit('networks', items=items)
         run_stream(args, seconds, session, action in ('wps', 'pixie'),
                    on_tick=publish_survey if action == 'survey' else None)
+        failed = False
     finally:
-        if action == 'capture':
-            cap_scope.unlink(missing_ok=True)
-        if action == 'survey':
-            publish_survey()
-        handoff_files(session, uid, gid)
-        emit('files', paths=[str(p) for p in session.iterdir() if p.is_file()])
+        try:
+            if action == 'capture':
+                cap_scope.unlink(missing_ok=True)
+            if session is not None:
+                if action == 'survey' and publish_survey is not None:
+                    publish_survey()
+                handoff_files(session, uid, gid)
+                emit('files', paths=[str(p) for p in session.iterdir() if p.is_file()])
+        finally:
+            # Keep a completed survey ready for selection; Stop/EOF, failures,
+            # captures and active tests all finish by restoring the saved state.
+            if action != 'survey' or STOP.is_set() or failed:
+                cleanup_radio(name, lock)
 
 if __name__ == '__main__':
     try:

@@ -1,6 +1,6 @@
 # Parrot Wi-Fi Tool
 
-A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.2.1** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
+A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.3.0** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
 
 ## Install on Parrot
 
@@ -39,7 +39,9 @@ If your desktop lacks a polkit authentication agent, pkexec prompts may fail. La
 - Selected-AP injection test.
 - Directed deauthentication against a specified client, 1–5 bursts. This may run beside a capture of the same AP/channel on the selected card.
 - WPS discovery using Wash, a bounded PIN test (1–100 attempts, 120 seconds), and one-attempt Pixie Dust test (120 seconds). Reported WPS locks/rate limiting stop the test. No lock bypass is used.
-- Stop All closes the control pipes so the privileged helper terminates its child process groups, including descendants. Operations also have time limits.
+- Automatic restoration after captures/tests, failures, Stop All, and normal app close. The saved MAC, mode, link state and known NetworkManager control setting are restored; capture files are retained.
+- Stop All closes control pipes so the privileged helper terminates its child process groups, including descendants, before restoring. Overlapping capture/deauth jobs wait until the last radio operation stops.
+- The app waits for verified cleanup before closing. Failed/denied restoration keeps the app open and retains recovery state for retry. Tests automatically re-enter monitor mode if a preceding test restored managed mode.
 
 ## First use
 
@@ -48,7 +50,7 @@ If your desktop lacks a polkit authentication agent, pkexec prompts may fail. La
 3. Open **Survey & capture → Scan networks**. Select your network as rows arrive. This fills the AP BSSID and channel; WPS status updates during the scan. A router advertising WPS shows test options below the list. Finish/stop the scan before testing; a reported WPS lock disables the offered tests.
 4. Confirm you own or have permission to test that target. Choose a save folder, set the capture duration, and select **Start targeted capture**.
 5. Reconnect one of your own devices to the network. Stop capture, then **Save latest session**. **Check handshake file…** opens a file picker; select the `.cap` and keep the correct AP BSSID selected.
-6. Before returning the card to everyday use, stop all tasks and select **Restore adapter completely**. Wi-Fi may need to be reconnected.
+6. A completed capture/test automatically restores its saved adapter state. **Stop All** also ends the scanning session and restores modified cards. **Restore adapter completely** remains available for an explicit reset. Wi-Fi may need to reconnect.
 
 For an active test, select the correct target/channel and open **Active tests & WPS**. Directed deauth requires the client MAC; it does not broadcast against all nearby clients. The app asks for confirmation before each active test. Be aware that even a single aireplay-ng burst contains multiple frames.
 
@@ -66,7 +68,7 @@ Monitor mode and injection depend on chipset, kernel and driver. This app uses `
 
 MAC changes leave the selected card unmanaged so NetworkManager cannot immediately replace its test MAC. Use **Managed mode** or **Restore adapter completely** to return it to NetworkManager. Only the selected interface is unmanaged in NetworkManager. The app does not run `airmon-ng check kill` or globally stop networking. Original MAC, mode, link state and known NetworkManager management state are saved before the first change. The saved MAC is the address present then, which can differ from the factory hardware MAC. Persistent state survives a normal restart; unplugging/replacing a card with the same interface name can make old saved state stale. Use Restore adapter before unplugging.
 
-Closing the GUI stops active jobs but deliberately leaves the chosen monitor/MAC settings in place. Restore explicitly before exiting. Power loss or killing the privileged helper itself can require manual recovery or unplugging/replugging the adapter. The app cannot guarantee driver recovery.
+A naturally completed network survey keeps monitor mode ready so you can select a network and test it. A completed capture, injection/deauth/WPS test, a failed operation, Stop All, or normal window close triggers restoration. A subsequent test automatically re-enters monitor mode. The last worker restores when capture and deauth overlap; the other worker defers. Closing waits for all workers and any remaining modified cards to be restored. If restoration is denied, a card disappears, or verification fails, the app stays open and preserves its snapshot; reconnect the card/approve the prompt and press Stop All to retry. Adapter changes discovered from a previous session are also restored on normal close. A lost GUI control pipe triggers worker cleanup during radio operations. Power loss, SIGKILL of the privileged worker, or a driver/kernel failure can still prevent cleanup; recovery state is retained for the next run. The app does not reset your router or delete saved Wi-Fi profiles.
 
 Protected Management Frames can prevent deauthentication. WPA3 is not the WPA2 offline handshake/password-check workflow. Hidden SSIDs may remain hidden. A completed test or missing handshake is not proof of security. WPS tests may fail on patched/locked hardware or because the required package variant/options differ; inspect the displayed tool output.
 
@@ -95,7 +97,7 @@ python3 tests/toolchain_check.py
 xvfb-run -a python3 tests/smoke_gui.py
 ```
 
-Tests cover WPS advertisement parsing, live partial-packet reads, WPS lock updates, WPS offer behavior, MAC validation, target bounds, network parsing, handshake result interpretation, scoped command construction, child-process cancellation/timeouts, WPS lock handling and failed monitor-mode rollback. The GUI smoke test exercises real Tk widgets without a radio. **Live adapter/radio behavior must be validated on your Parrot machine.** CI also runs real binary option checks, replays the upstream WPS beacon through Airodump, and verifies the handshake detector against the upstream WPA capture, using pinned/hash-checked public fixtures. These offline checks run on Ubuntu and Debian Bookworm; they cannot verify your USB radio, kernel module, injection, or WPS vulnerability.
+Tests cover restoration after completion/errors/cancellation, overlapping radio-job cleanup, retained state on recovery failure, GUI close waiting and authorization-denial handling, WPS advertisement parsing, live partial-packet reads, WPS lock updates, WPS offer behavior, MAC validation, target bounds, network parsing, handshake result interpretation, scoped command construction, child-process cancellation/timeouts, WPS lock handling and failed monitor-mode rollback. The GUI smoke test exercises real Tk widgets without a radio. **Live adapter/radio behavior must be validated on your Parrot machine.** CI also runs real binary option checks, replays the upstream WPS beacon through Airodump, and verifies the handshake detector against the upstream WPA capture, using pinned/hash-checked public fixtures. These offline checks run on Ubuntu and Debian Bookworm; they cannot verify your USB radio, kernel module, injection, or WPS vulnerability.
 
 Tool references: [Aircrack-ng documentation](https://www.aircrack-ng.org/documentation.html), [Airodump-ng](https://www.aircrack-ng.org/doku.php?id=airodump-ng), [Aireplay-ng](https://www.aircrack-ng.org/doku.php?id=aireplay-ng), [Reaver/Wash upstream](https://github.com/t6x/reaver-wps-fork-t6x).
 

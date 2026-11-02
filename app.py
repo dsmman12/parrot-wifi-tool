@@ -20,6 +20,8 @@ from core import VERSION, clean, handshake_status, interfaces, mac, number
 # Use distribution tool locations consistently with the privileged worker.
 os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
 BASE = Path(__file__).resolve().parent
+RADIO_ACTIONS = {'survey', 'capture', 'injection', 'deauth', 'wash', 'wps', 'pixie'}
+CONFIG_ACTIONS = {'monitor', 'managed', 'random', 'custom', 'restore-mac'}
 TOOLS = ('iw', 'ip', 'nmcli', 'pkexec', 'airodump-ng', 'aireplay-ng', 'aircrack-ng', 'wash', 'reaver', 'pixiewps')
 
 class App(tk.Tk):
@@ -39,6 +41,10 @@ class App(tk.Tk):
         style.map('Treeview', background=[('selected', '#245c85')])
         self.events = queue.Queue()
         self.jobs = {}
+        self.dirty_adapters = set()
+        self.cleanup_requested = False
+        self.cleanup_attempted = set()
+        self.cleanup_failed = False
         self.devices = []
         self.network_rows = {}
         self.wps_notice = tk.StringVar(value="Select a network to see WPS options.")
@@ -82,7 +88,7 @@ class App(tk.Tk):
         tabs.add(radio, text='Adapter controls')
         tabs.add(capture, text='Survey & capture')
         tabs.add(tests, text='Active tests & WPS')
-        ttk.Label(radio, text='Use a dedicated USB adapter: monitor mode disconnects the selected card from normal Wi-Fi.', wraplength=900).pack(anchor='w', pady=8)
+        ttk.Label(radio, text='Auto-restore runs after tests, Stop All, and closing. Use a dedicated USB adapter: monitor mode disconnects the selected card from normal Wi-Fi.', wraplength=900).pack(anchor='w', pady=8)
         modes = ttk.Frame(radio)
         modes.pack(fill='x', pady=10)
         for label, action in [('Enable monitor mode', 'monitor'), ('Managed mode', 'managed'), ('Restore adapter completely', 'restore')]:
@@ -280,10 +286,11 @@ class App(tk.Tk):
         except ValueError as exc:
             messagebox.showerror('Test target', str(exc))
 
-    def start(self, action, data):
-        if self.pending_close:
-            return
-        name = self.adapter.get()
+    def start(self, action, data, cleanup=False):
+        if (self.pending_close or self.cleanup_requested) and not cleanup:
+            self.write('Wait for adapter restoration to finish.')
+            return False
+        name = data.get('interface', self.adapter.get())
         if not name:
             messagebox.showerror('Adapter', 'Select an adapter first.')
             return
@@ -306,7 +313,7 @@ class App(tk.Tk):
         data = {**data, 'interface': name}
         if action == 'survey':
             self.update_networks([])
-        self.jobs[action] = {'process': None, 'cancel': False, 'data': data}
+        self.jobs[action] = {'process': None, 'cancel': False, 'data': data, 'cleanup': cleanup}
         self.update_wps_offer()
         self.adapter_box.configure(state='disabled')
         self.status.set('Running: ' + ', '.join(self.jobs))
@@ -330,6 +337,7 @@ class App(tk.Tk):
                 self.events.put(('error', str(exc)))
                 self.events.put(('finished', (action, 1)))
         self.background(work)
+        return True
 
     def stop(self, action):
         job = self.jobs.get(action)
@@ -340,9 +348,69 @@ class App(tk.Tk):
                 p.stdin.close()
             self.write(f'[{action}] Stop requested; waiting for process cleanup.')
 
+    def request_cleanup(self, close=False):
+        self.pending_close = self.pending_close or close
+        if not self.cleanup_requested:
+            self.cleanup_attempted.clear()
+            self.cleanup_failed = False
+        self.cleanup_requested = True
+        self.advance_cleanup()
+
+    def advance_cleanup(self):
+        if self.jobs or not self.cleanup_requested:
+            return
+        for name in sorted(self.dirty_adapters - self.cleanup_attempted):
+            self.cleanup_attempted.add(name)
+            self.status.set('Restoring adapter: ' + name)
+            if self.start('restore', {'interface': name}, cleanup=True):
+                return
+            self.cleanup_failed = True
+        self.cleanup_requested = False
+        self.cleanup_attempted.clear()
+        if self.cleanup_failed or self.dirty_adapters:
+            self.pending_close = False
+            self.status.set('Restoration needs attention — see log')
+            messagebox.showerror('Restoration incomplete', 'Network restoration was not verified. The app will stay open. Reconnect a missing card or approve administrator access, then press Stop All to retry. Saved recovery state is retained.')
+            return
+        self.status.set('Network settings restored')
+        if self.pending_close:
+            self.destroy()
+        else:
+            self.adapter_box.configure(state='readonly')
+            self.refresh()
+
     def stop_all(self):
-        for action in list(self.jobs):
-            self.stop(action)
+        # Never interrupt an in-progress restore with another Stop click.
+        for action, job in list(self.jobs.items()):
+            if not job.get('cleanup'):
+                self.stop(action)
+        self.request_cleanup()
+
+    def finish_job(self, action, code):
+        job = self.jobs.pop(action, None)
+        if job and job['process'] and job['process'].stdin and not job['process'].stdin.closed:
+            job['process'].stdin.close()
+        if job:
+            try:
+                if (Path('/var/lib/parrot-wifi-tool') / (job['data']['interface'] + '.json')).exists():
+                    self.dirty_adapters.add(job['data']['interface'])
+            except OSError:
+                pass
+        self.write(f'[{action}] Finished (exit {code}).' + (' Authorization cancelled or denied.' if code in (126, 127) else ''))
+        if job and job.get('cleanup') and (code != 0 or job['data']['interface'] in self.dirty_adapters):
+            self.cleanup_failed = True
+        self.status.set('Running: ' + ', '.join(self.jobs) if self.jobs else 'Ready')
+        self.update_wps_offer()
+        # A finished survey leaves monitor mode ready for network selection.
+        # Tests/captures, failures and any explicit stop are completion points.
+        needs_reset = (action in RADIO_ACTIONS and (action != 'survey' or code != 0 or bool(job and job.get('cancel')))) or (action in CONFIG_ACTIONS and code != 0)
+        if needs_reset and not self.jobs:
+            self.request_cleanup()
+        elif self.cleanup_requested or self.pending_close:
+            self.advance_cleanup()
+        elif not self.jobs:
+            self.adapter_box.configure(state='readonly')
+            self.refresh()
 
     def poll_events(self):
         try:
@@ -350,6 +418,12 @@ class App(tk.Tk):
                 kind, data = self.events.get_nowait()
                 if kind == 'devices':
                     self.devices = data
+                    for item in data:
+                        try:
+                            if (Path('/var/lib/parrot-wifi-tool') / (item['name'] + '.json')).exists():
+                                self.dirty_adapters.add(item['name'])
+                        except OSError:
+                            pass
                     self.adapter_box.configure(values=[d['name'] for d in data])
                     if self.adapter.get() not in [d['name'] for d in data]:
                         preferred = next((d['name'] for d in data if d['name'].startswith('wlx')), data[0]['name'] if data else '')
@@ -369,7 +443,12 @@ class App(tk.Tk):
                 elif kind == 'worker':
                     action, event = data
                     event_type = event.get('event')
-                    if event_type in ('log', 'error'):
+                    if event_type == 'state_saved':
+                        self.dirty_adapters.add(event['interface'])
+                    elif event_type == 'restored':
+                        self.dirty_adapters.discard(event['interface'])
+                        self.write('Verified network settings restored: ' + event['interface'])
+                    elif event_type in ('log', 'error'):
                         self.write(f'[{action}] ' + event.get('text', ''))
                     elif event_type == 'session':
                         # Do not replace latest completed session until files are finalized.
@@ -383,18 +462,8 @@ class App(tk.Tk):
                     elif event_type == 'networks':
                         self.update_networks(event['items'])
                 elif kind == 'finished':
-                    action, code = data
-                    job = self.jobs.pop(action, None)
-                    if job and job['process'] and job['process'].stdin and not job['process'].stdin.closed:
-                        job['process'].stdin.close()
-                    self.write(f'[{action}] Finished (exit {code}).' + (' Authorization cancelled or denied.' if code in (126, 127) else ''))
-                    self.status.set('Running: ' + ', '.join(self.jobs) if self.jobs else 'Ready')
-                    self.update_wps_offer()
-                    if not self.jobs:
-                        self.adapter_box.configure(state='readonly')
-                        self.refresh()
-                    if self.pending_close and not self.jobs:
-                        self.destroy()
+                    self.finish_job(*data)
+                    if self.pending_close and not self.cleanup_requested and not self.jobs:
                         return
                 elif kind == 'analysis':
                     self.write(data)
@@ -449,13 +518,11 @@ class App(tk.Tk):
         self.background(work)
 
     def close_app(self):
-        if self.jobs:
-            if not messagebox.askokcancel('Stop before exit', 'Stop all operations and close? Adapter settings remain as shown. Use Restore adapter before exit to restore its saved state.'):
+        if self.jobs and not self.cleanup_requested:
+            if not messagebox.askokcancel('Stop and restore before exit', 'Stop operations, restore changed adapters, and close? Capture files will be kept.'):
                 return
-            self.pending_close = True
-            self.stop_all()
-        else:
-            self.destroy()
+        self.pending_close = True
+        self.stop_all()
 
 if __name__ == '__main__':
     if os.geteuid() == 0:
