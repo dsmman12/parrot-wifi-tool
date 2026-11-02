@@ -8,6 +8,7 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+import signal
 import sys
 import tempfile
 import urllib.request
@@ -23,6 +24,23 @@ FIXTURES = {'wps2.0.pcap':'8a464055e97670de1d71ec1bbc91d954e83f0158',
 def run(args, timeout=20):
     result = subprocess.run(args, capture_output=True, text=True, env=ENV, timeout=timeout)
     return result, result.stdout + '\n' + result.stderr
+
+def replay(args):
+    # Airodump keeps its display alive after reaching EOF; stop it cleanly,
+    # as the GUI's bounded capture runner does, so final output is flushed.
+    with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, env=ENV) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.send_signal(signal.SIGINT)
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+                raise AssertionError('Airodump did not stop after SIGINT: '+stdout+stderr)
+        return process, stdout+'\n'+stderr
 
 for tool, options in [('airodump-ng',['--wps','--beacons','--output-format','-r ']),
                       ('reaver',['--max-attempts','--pixie-dust','--session']),
@@ -45,9 +63,9 @@ with tempfile.TemporaryDirectory() as folder:
     assert observations.get('00:c0:ca:78:b1:37',{}).get('wps_detected'), observations
     print('PASS: WPS parser detects upstream real WPS beacon')
     # Replay offline through airodump's actual CSV/pcap writer, no adapter selected.
-    result, output = run(['airodump-ng','-r',str(directory/'wps2.0.pcap'),
+    result, output = replay(['airodump-ng','-r',str(directory/'wps2.0.pcap'),
                           '--write',str(directory/'survey'),'--wps','--beacons',
-                          '--output-format','pcap,csv','--write-interval','1'], timeout=20)
+                          '--output-format','pcap,csv','--write-interval','1'])
     csv_files=list(directory.glob('survey*.csv'))
     cap_files=list(directory.glob('survey*.cap'))
     assert csv_files and cap_files, f'Airodump did not write files (exit {result.returncode}):\n{output}'
