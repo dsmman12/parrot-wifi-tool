@@ -15,6 +15,9 @@ from tkinter.scrolledtext import ScrolledText
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from core import VERSION, clean, handshake_status, interfaces, mac, number
 
+# Desktop launchers on Debian/Parrot may omit sbin from the user's PATH.
+# Use distribution tool locations consistently with the privileged worker.
+os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
 BASE = Path(__file__).resolve().parent
 TOOLS = ('iw', 'ip', 'nmcli', 'pkexec', 'airodump-ng', 'aireplay-ng', 'aircrack-ng', 'wash', 'reaver', 'pixiewps')
 

@@ -3,7 +3,7 @@ import csv
 import io
 import re
 
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 
 def clean(text):

@@ -224,9 +224,7 @@ def execute(resources):
                 command(['ip', 'link', 'set', 'dev', name, 'up'])
                 if device(name)['mac'].lower() != value:
                     raise RuntimeError('Driver rejected the MAC change.')
-                state = json.loads(state_path(name).read_text())
-                if info['type'] == 'managed' and state['nm'] in ('yes', 'no'):
-                    command(['nmcli', 'device', 'set', name, 'managed', state['nm']])
+                emit('log', text='MAC change verified. Card remains unmanaged to prevent NetworkManager replacing the test MAC; use Managed mode or Restore adapter to reconnect.')
             emit('log', text=f'Adapter verified: {device(name)}')
         except Exception:
             try:

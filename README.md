@@ -1,6 +1,6 @@
 # Parrot Wi-Fi Tool
 
-A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.2.0** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
+A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.2.1** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
 
 ## Install on Parrot
 
@@ -63,7 +63,7 @@ The survey saves packet captures as well as CSV so WPS vendor information elemen
 
 Monitor mode and injection depend on chipset, kernel and driver. This app uses `iw` on the selected interface, verifies the mode, and attempts to roll back configuration failures. It does not install or repair DKMS drivers. RTL8814AU driver warnings may still require separate driver diagnosis. Other cards sharing the same physical radio can also be affected by channel/mode changes; use a dedicated USB radio.
 
-Only the selected interface is unmanaged in NetworkManager. The app does not run `airmon-ng check kill` or globally stop networking. Original MAC, mode, link state and known NetworkManager management state are saved before the first change. The saved MAC is the address present then, which can differ from the factory hardware MAC. Persistent state survives a normal restart; unplugging/replacing a card with the same interface name can make old saved state stale. Use Restore adapter before unplugging.
+MAC changes leave the selected card unmanaged so NetworkManager cannot immediately replace its test MAC. Use **Managed mode** or **Restore adapter completely** to return it to NetworkManager. Only the selected interface is unmanaged in NetworkManager. The app does not run `airmon-ng check kill` or globally stop networking. Original MAC, mode, link state and known NetworkManager management state are saved before the first change. The saved MAC is the address present then, which can differ from the factory hardware MAC. Persistent state survives a normal restart; unplugging/replacing a card with the same interface name can make old saved state stale. Use Restore adapter before unplugging.
 
 Closing the GUI stops active jobs but deliberately leaves the chosen monitor/MAC settings in place. Restore explicitly before exiting. Power loss or killing the privileged helper itself can require manual recovery or unplugging/replugging the adapter. The app cannot guarantee driver recovery.
 
@@ -88,11 +88,13 @@ Restore the adapter, close the app, then run `bash uninstall.sh` from the clone.
 python3 -m py_compile app.py worker.py core.py
 python3 -m unittest discover -s tests -v
 bash -n install.sh uninstall.sh
+# Real distro binaries + hash-verified public upstream captures (requires Internet):
+python3 tests/toolchain_check.py
 # With xvfb installed:
 xvfb-run -a python3 tests/smoke_gui.py
 ```
 
-Tests cover WPS advertisement parsing, live partial-packet reads, WPS lock updates, WPS offer behavior, MAC validation, target bounds, network parsing, handshake result interpretation, scoped command construction, child-process cancellation/timeouts, WPS lock handling and failed monitor-mode rollback. The GUI smoke test exercises real Tk widgets without a radio. **Live adapter/radio behavior must be validated on your Parrot machine.**
+Tests cover WPS advertisement parsing, live partial-packet reads, WPS lock updates, WPS offer behavior, MAC validation, target bounds, network parsing, handshake result interpretation, scoped command construction, child-process cancellation/timeouts, WPS lock handling and failed monitor-mode rollback. The GUI smoke test exercises real Tk widgets without a radio. **Live adapter/radio behavior must be validated on your Parrot machine.** CI also runs real binary option checks, replays the upstream WPS beacon through Airodump, and verifies the handshake detector against the upstream WPA capture, using pinned/hash-checked public fixtures. These offline checks run on Ubuntu and Debian Bookworm; they cannot verify your USB radio, kernel module, injection, or WPS vulnerability.
 
 Tool references: [Aircrack-ng documentation](https://www.aircrack-ng.org/documentation.html), [Airodump-ng](https://www.aircrack-ng.org/doku.php?id=airodump-ng), [Aireplay-ng](https://www.aircrack-ng.org/doku.php?id=aireplay-ng), [Reaver/Wash upstream](https://github.com/t6x/reaver-wps-fork-t6x).
 
