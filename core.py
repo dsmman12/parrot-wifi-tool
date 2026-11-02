@@ -3,7 +3,7 @@ import csv
 import io
 import re
 
-VERSION = '0.3.1'
+VERSION = '0.3.2'
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 
 def clean(text):
@@ -30,6 +30,9 @@ def interfaces(text):
         line = line.strip()
         if line.startswith('phy#'):
             phy = line
+            current = None
+        elif line.startswith('Unnamed/non-netdev interface'):
+            current = None
         elif line.startswith('Interface '):
             current = {'name': line.split()[1], 'phy': phy, 'type': '', 'mac': ''}
             result.append(current)

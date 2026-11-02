@@ -1,6 +1,6 @@
 # Parrot Wi-Fi Tool
 
-A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.3.1** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
+A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.3.2** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
 
 ## Install on Parrot
 
@@ -102,3 +102,5 @@ Tests cover restoration after completion/errors/cancellation, overlapping radio-
 Tool references: [Aircrack-ng documentation](https://www.aircrack-ng.org/documentation.html), [Airodump-ng](https://www.aircrack-ng.org/doku.php?id=airodump-ng), [Aireplay-ng](https://www.aircrack-ng.org/doku.php?id=aireplay-ng), [Reaver/Wash upstream](https://github.com/t6x/reaver-wps-fork-t6x).
 
 Only test equipment you own or have explicit permission to assess.
+
+Version 0.3.2 fixes unnamed P2P-device entries overwriting a real adapter in `iw dev` parsing. Known corrupted P2P snapshots are backed up, then migrated to managed mode with a verified permanent MAC from the kernel/ethtool (or the kernel-marked permanent current address). If a permanent MAC cannot be verified, recovery stops and keeps the old snapshot instead of guessing.

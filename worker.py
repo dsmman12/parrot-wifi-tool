@@ -61,10 +61,42 @@ def device(name):
 def state_path(name):
     return ROOT / f'{name}.json'
 
+def recover_saved_state(name, path, state):
+    if state.get('type') != 'P2P-device':
+        return state
+    # Older parsers let an unnamed P2P block overwrite the preceding netdev.
+    # Its MAC may be wrong too: recover a verified permanent MAC, never guess.
+    link = json.loads(command(['ip', '-j', 'link', 'show', 'dev', name]).stdout)[0]
+    candidates = [link.get('permaddr', '')]
+    if shutil.which('ethtool', path=ENV['PATH']):
+        result = command(['ethtool', '-P', name], False)
+        if result.returncode == 0:
+            candidates.extend(re.findall(r'(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}', result.stdout))
+    assign_type = Path('/sys/class/net') / name / 'addr_assign_type'
+    if assign_type.exists() and assign_type.read_text().strip() == '0':
+        candidates.append(link.get('address', ''))
+    permanent = None
+    for candidate in candidates:
+        try:
+            permanent = mac(candidate)
+            break
+        except ValueError:
+            continue
+    if permanent is None:
+        raise RuntimeError('Old P2P snapshot is invalid, and the permanent MAC could not be verified. Install ethtool and retry, or replug the USB card before retrying. Original snapshot retained.')
+    backup = path.with_suffix('.pre-p2p-fix.json')
+    if not backup.exists():
+        backup.write_text(json.dumps(state))
+        os.chmod(backup, 0o600)
+    state = {**state, 'type':'managed', 'mac':permanent}
+    path.write_text(json.dumps(state))
+    emit('log', text='Repaired old P2P snapshot: managed mode and verified permanent MAC. Original record backed up.')
+    return state
+
 def remember(name):
     path = state_path(name)
     if path.exists():
-        state = json.loads(path.read_text())
+        state = recover_saved_state(name, path, json.loads(path.read_text()))
         emit('state_saved', interface=name)
         return state
     info = device(name)
@@ -95,7 +127,7 @@ def restore(name):
         emit('log', text='No pending adapter changes; already restored.')
         emit('restored', interface=name)
         return
-    state = json.loads(path.read_text())
+    state = recover_saved_state(name, path, json.loads(path.read_text()))
     unmanage(name)
     command(['ip', 'link', 'set', 'dev', name, 'down'])
     command(['iw', 'dev', name, 'set', 'type', state['type']])

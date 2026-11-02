@@ -9,7 +9,7 @@ for file in app.py worker.py core.py launcher.sh; do
     test -f "$project_dir/$file" || { echo "Missing $file. Download the complete repository."; exit 1; }
 done
 sudo apt-get update
-sudo apt-get install -y python3 python3-tk iw iproute2 network-manager aircrack-ng reaver pixiewps sudo
+sudo apt-get install -y python3 python3-tk iw iproute2 ethtool network-manager aircrack-ng reaver pixiewps sudo
 sudo install -d -o root -g root -m 755 /usr/local/lib/parrot-wifi-tool
 sudo install -o root -g root -m 644 "$project_dir/app.py" "$project_dir/worker.py" "$project_dir/core.py" /usr/local/lib/parrot-wifi-tool/
 sudo install -d -o root -g root -m 755 /usr/local/bin
