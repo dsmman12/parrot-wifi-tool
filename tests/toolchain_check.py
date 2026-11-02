@@ -2,7 +2,7 @@
 
 Run on Parrot after install: python3 tests/toolchain_check.py
 Downloads only two public, hash-verified Aircrack-ng test captures into a temporary
-folder. Uses an empty wordlist; never attempts to recover a real network password.
+folder. Uses only a one-character invalid WPA entry; no valid password candidates are tested.
 """
 import hashlib
 import os
@@ -73,8 +73,10 @@ with tempfile.TemporaryDirectory() as folder:
     assert any(i['bssid']=='00:c0:ca:78:b1:37' for i in rows), (rows,output)
     assert WpsObserver().update(cap_files[0]).get('00:c0:ca:78:b1:37',{}).get('wps_detected'), output
     print('PASS: real Airodump output matches our network and WPS parsers')
-    # Upstream public WPA test fixture, empty wordlist: only handshake recognition.
-    _, output = run(['aircrack-ng','-a','2','-b','00:0d:93:eb:b0:8c','-w','/dev/null',str(directory/'wpa.cap')])
+    # A nonempty but invalid WPA entry avoids packaged Aircrack's empty-dict bug.
+    sentinel=directory/'invalid-wpa-entry.txt'
+    sentinel.write_text('x\n')
+    _, output = run(['aircrack-ng','-a','2','-b','00:0d:93:eb:b0:8c','-w',str(sentinel),str(directory/'wpa.cap')])
     assert 'Handshake recognized by' in handshake_status(output), output
     print('PASS: real Aircrack-ng handshake output matches our detector')
 print('All offline toolchain checks passed. Live monitor/injection still require your adapter.')
