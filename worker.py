@@ -303,7 +303,6 @@ def prepare_radio(name, info):
 def radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds, channel, bssid):
     session = None
     publish_survey = None
-    failed = True
     threading.Thread(target=listen, daemon=True).start()
     try:
         if not prepare_radio(name, info):
@@ -340,7 +339,6 @@ def radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds
                 emit('networks', items=items)
         run_stream(args, seconds, session, action in ('wps', 'pixie'),
                    on_tick=publish_survey if action == 'survey' else None)
-        failed = False
     finally:
         try:
             if action == 'capture':
@@ -351,10 +349,8 @@ def radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds
                 handoff_files(session, uid, gid)
                 emit('files', paths=[str(p) for p in session.iterdir() if p.is_file()])
         finally:
-            # Keep a completed survey ready for selection; Stop/EOF, failures,
-            # captures and active tests all finish by restoring the saved state.
-            if action != 'survey' or STOP.is_set() or failed:
-                cleanup_radio(name, lock)
+            # Every completed/stopped radio operation restores the saved state.
+            cleanup_radio(name, lock)
 
 if __name__ == '__main__':
     try:

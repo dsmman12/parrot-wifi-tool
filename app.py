@@ -401,9 +401,8 @@ class App(tk.Tk):
             self.cleanup_failed = True
         self.status.set('Running: ' + ', '.join(self.jobs) if self.jobs else 'Ready')
         self.update_wps_offer()
-        # A finished survey leaves monitor mode ready for network selection.
-        # Tests/captures, failures and any explicit stop are completion points.
-        needs_reset = (action in RADIO_ACTIONS and (action != 'survey' or code != 0 or bool(job and job.get('cancel')))) or (action in CONFIG_ACTIONS and code != 0)
+        # Table results survive reset; the next operation re-enters monitor mode.
+        needs_reset = action in RADIO_ACTIONS or (action in CONFIG_ACTIONS and code != 0)
         if needs_reset and not self.jobs:
             self.request_cleanup()
         elif self.cleanup_requested or self.pending_close:
