@@ -5,13 +5,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install desktop and Wi-Fi test dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb aircrack-ng reaver pixiewps iw iproute2
       - name: Compile and run tests
         run: |
           python3 -m py_compile app.py worker.py core.py
           python3 -m unittest discover -s tests -v
           bash -n install.sh uninstall.sh
-      - name: Install desktop and Wi-Fi test dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb aircrack-ng reaver pixiewps iw iproute2
       - name: Desktop smoke test
         run: xvfb-run -a python3 tests/smoke_gui.py
       - name: Real toolchain and upstream capture replay
