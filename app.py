@@ -110,7 +110,7 @@ class App(tk.Tk):
         toolbar.pack(fill='x')
         ttk.Button(toolbar, text='Scan networks · 20 sec', command=lambda: self.start('survey', {'seconds': 20})).pack(side='left')
         ttk.Button(toolbar, text='Scan selected router / capture', command=self.capture).pack(side='left', padx=8)
-        ttk.Label(toolbar, text='Select your router, then scan its clients.').pack(side='left', padx=8)
+        ttk.Label(toolbar, text='Click a network to stop scanning and continue →').pack(side='left', padx=8)
         cols = ('ssid', 'bssid', 'channel', 'security', 'signal', 'wps')
         self.tree = ttk.Treeview(capture, columns=cols, show='headings', height=6, selectmode='browse')
         for column, width in zip(cols, (210, 170, 65, 100, 65, 155)):
@@ -249,6 +249,17 @@ class App(tk.Tk):
             if changed:
                 self.authorized.set(False)
             self.update_wps_offer()
+            # User selection advances immediately; discovery refreshes must not
+            # launch radio work or reset the user's authorization checkbox.
+            if not self.jobs or set(self.jobs) == {'survey'}:
+                self.tabs.select(self.target_capture_tab)
+                self.capture_notice.set(
+                    f"Selected {values[0] or '(hidden network)'} · {values[1]} · channel {values[2]}. "
+                    "Check the permission box above, then click Start client scan & capture."
+                )
+                if 'survey' in self.jobs:
+                    self.stop('survey')
+                    self.capture_notice.set(self.capture_notice.get() + ' Finishing network scan and restoring adapter…')
 
     def update_networks(self, items):
         self.network_rows = {item['bssid']: item for item in items}
