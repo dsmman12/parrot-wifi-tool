@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -395,11 +396,19 @@ class App(tk.Tk):
                 p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 # Send process handle through queue; all Tk state stays on the UI thread.
                 self.events.put(('process', (action, p)))
+                next_display_log = 0.0
                 for line in p.stdout:
                     try:
                         event = json.loads(line)
                     except json.JSONDecodeError:
                         event = {'event': 'log', 'text': clean(line).strip()}
+                    # Airodump emits full terminal redraws. Keep its full output
+                    # in the worker session log, not the Tk event backlog.
+                    if action in ('survey', 'capture') and event.get('event') == 'log':
+                        now = time.monotonic()
+                        if now < next_display_log:
+                            continue
+                        next_display_log = now + 1.0
                     self.events.put(('worker', (action, event)))
                 p.stdout.close()
                 code = p.wait()
@@ -487,8 +496,12 @@ class App(tk.Tk):
             self.refresh()
 
     def poll_events(self):
+        # Yield to input/redraw even if a worker continuously produces events.
+        deadline = time.monotonic() + 0.012
         try:
-            while True:
+            for _ in range(100):
+                if time.monotonic() >= deadline:
+                    break
                 kind, data = self.events.get_nowait()
                 if kind == 'devices':
                     self.devices = data
@@ -558,7 +571,7 @@ class App(tk.Tk):
                     messagebox.showinfo('Handshake check', data)
         except queue.Empty:
             pass
-        self.after(100, self.poll_events)
+        self.after(10 if not self.events.empty() else 100, self.poll_events)
 
     def choose_folder(self):
         path = filedialog.askdirectory(title='Choose where to save captures')
