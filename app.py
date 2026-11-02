@@ -50,6 +50,8 @@ class App(tk.Tk):
         self.wps_notice = tk.StringVar(value="Select a network to see WPS options.")
         self.last_session = None
         self.last_caps = []
+        self.handshake_found = False
+        self.capture_notice = tk.StringVar(value='Select your router, then start its client scan and capture.')
         self.pending_close = False
         self.adapter = tk.StringVar()
         self.status = tk.StringVar(value='Ready')
@@ -57,7 +59,7 @@ class App(tk.Tk):
         self.channel = tk.StringVar(value='6')
         self.station = tk.StringVar()
         self.custom_mac = tk.StringVar()
-        self.seconds = tk.StringVar(value='120')
+        self.seconds = tk.StringVar(value='300')
         self.attempts = tk.StringVar(value='10')
         self.count = tk.StringVar(value='1')
         self.authorized = tk.BooleanVar(value=False)
@@ -83,10 +85,14 @@ class App(tk.Tk):
         self.info_label = ttk.Label(top, text='')
         self.info_label.pack(side='right')
         tabs = ttk.Notebook(self)
+        self.tabs = tabs
         tabs.pack(fill='both', expand=True, padx=14)
         radio, capture, tests = [ttk.Frame(tabs, padding=12) for _ in range(3)]
         tabs.add(radio, text='Adapter controls')
-        tabs.add(capture, text='Survey & capture')
+        tabs.add(capture, text='1 · Networks')
+        target_capture = ttk.Frame(tabs, padding=12)
+        self.target_capture_tab = target_capture
+        tabs.add(target_capture, text='2 · Clients & handshake')
         tabs.add(tests, text='Active tests & WPS')
         ttk.Label(radio, text='Auto-restore runs after tests, Stop All, and closing. Use a dedicated USB adapter: monitor mode disconnects the selected card from normal Wi-Fi.', wraplength=900).pack(anchor='w', pady=8)
         modes = ttk.Frame(radio)
@@ -103,7 +109,8 @@ class App(tk.Tk):
         toolbar = ttk.Frame(capture)
         toolbar.pack(fill='x')
         ttk.Button(toolbar, text='Scan networks · 20 sec', command=lambda: self.start('survey', {'seconds': 20})).pack(side='left')
-        ttk.Label(toolbar, text='Select a row to set the target below.').pack(side='left', padx=12)
+        ttk.Button(toolbar, text='Scan selected router / capture', command=self.capture).pack(side='left', padx=8)
+        ttk.Label(toolbar, text='Select your router, then scan its clients.').pack(side='left', padx=8)
         cols = ('ssid', 'bssid', 'channel', 'security', 'signal', 'wps')
         self.tree = ttk.Treeview(capture, columns=cols, show='headings', height=6, selectmode='browse')
         for column, width in zip(cols, (210, 170, 65, 100, 65, 155)):
@@ -118,19 +125,34 @@ class App(tk.Tk):
         self.wps_pin_offer.pack(side='right', padx=4)
         self.wps_pixie_offer = ttk.Button(offer, text='Test Pixie Dust', state='disabled', command=lambda: self.active('pixie'))
         self.wps_pixie_offer.pack(side='right', padx=4)
-        row = ttk.Frame(capture)
+        row = ttk.Frame(target_capture)
         row.pack(fill='x', pady=4)
         ttk.Label(row, text='Capture limit (seconds)').pack(side='left')
         ttk.Spinbox(row, from_=5, to=3600, textvariable=self.seconds, width=7).pack(side='left', padx=8)
-        ttk.Button(row, text='Start targeted capture', command=self.capture).pack(side='left', padx=5)
+        ttk.Button(row, text='Start client scan & capture', command=self.capture).pack(side='left', padx=5)
         ttk.Button(row, text='Stop capture', command=lambda: self.stop('capture')).pack(side='left', padx=5)
         ttk.Button(row, text='Check handshake file…', command=self.check_file).pack(side='left', padx=5)
-        row = ttk.Frame(capture)
+        ttk.Label(target_capture, textvariable=self.capture_notice, wraplength=950).pack(anchor='w', pady=6)
+        self.client_tree = ttk.Treeview(target_capture, columns=('mac','signal','packets'), show='headings', height=5, selectmode='browse')
+        for column,width in (('mac',240),('signal',100),('packets',120)):
+            self.client_tree.heading(column,text=column.upper())
+            self.client_tree.column(column,width=width)
+        self.client_tree.pack(fill='both',expand=True,pady=5)
+        self.client_tree.bind('<<TreeviewSelect>>', self.select_client)
+        self.reconnect_button = ttk.Button(target_capture,text='Deauth selected client · keep waiting for handshake',state='disabled',command=lambda:self.active('deauth'))
+        self.reconnect_button.pack(anchor='w',pady=5)
+        row = ttk.Frame(target_capture)
+        row.pack(fill='x',pady=3)
+        self.broadcast_button = ttk.Button(row,text='Deauth all clients on selected AP',state='disabled',command=lambda:self.active('deauth', whole_network=True))
+        self.broadcast_button.pack(side='left')
+        ttk.Label(row,text='Bounded bursts').pack(side='left',padx=8)
+        ttk.Spinbox(row,from_=1,to=5,textvariable=self.count,width=4).pack(side='left')
+        row = ttk.Frame(target_capture)
         row.pack(fill='x', pady=6)
         ttk.Entry(row, textvariable=self.export_folder).pack(side='left', fill='x', expand=True)
         ttk.Button(row, text='Choose save folder…', command=self.choose_folder).pack(side='left', padx=5)
         ttk.Button(row, text='Save latest session', command=self.export_session).pack(side='left')
-        ttk.Label(capture, text='Capture waits for a client to reconnect. Stop flushes capture files; export copies them to your chosen folder.\nHandshake checking recognizes Aircrack-ng output; it does not recover a password.', wraplength=950).pack(anchor='w', pady=4)
+        ttk.Label(target_capture, text='Client scanning and capture run together on your selected router/channel. Select a client, then deauth it.\nCapture continues after deauth, and stops automatically on an Airodump-confirmed handshake or at the timer limit.\nHandshake checking recognizes Aircrack-ng output; it does not recover a password.', wraplength=950).pack(anchor='w', pady=4)
         ttk.Label(tests, text='Active tests can interrupt your selected network. Use only your own equipment or an explicitly authorized assessment.', wraplength=950).pack(anchor='w', pady=8)
         row = ttk.Frame(tests)
         row.pack(fill='x', pady=5)
@@ -161,7 +183,7 @@ class App(tk.Tk):
         ttk.Button(bar, text='STOP ALL', command=self.stop_all).pack(side='right')
         self.log = ScrolledText(self, height=10, bg='#080f1b', fg='#a6e3c1', insertbackground='white', font=('Monospace', 9), state='disabled')
         self.log.pack(fill='both', padx=14, pady=(0, 12))
-        self.write('Ready. Refresh cards → enable monitor mode → scan → select target → capture. Launch with parrot-wifi-tool to authorize sudo once in the terminal.')
+        self.write('Ready. Scan networks → choose your router → scan its clients → select a client → deauth → wait for handshake. Launch with parrot-wifi-tool to authorize sudo once in the terminal.')
 
     def write(self, text):
         self.log.configure(state='normal')
@@ -262,6 +284,33 @@ class App(tk.Tk):
         state = 'normal' if detected and not locked and not self.jobs else 'disabled'
         self.wps_pin_offer.configure(state=state)
         self.wps_pixie_offer.configure(state=state)
+        self.update_capture_controls()
+
+    def update_clients(self, items):
+        old = set(self.client_tree.get_children())
+        for item in items:
+            key = item['mac']
+            values = [item['mac'], item['signal'], item['packets']]
+            if key in old:
+                self.client_tree.item(key,values=values)
+                old.remove(key)
+            else:
+                self.client_tree.insert('', 'end', iid=key,values=values)
+        for key in old:
+            self.client_tree.delete(key)
+        self.update_capture_controls()
+
+    def select_client(self, _=None):
+        selected = self.client_tree.selection()
+        if selected:
+            self.station.set(self.client_tree.item(selected[0], 'values')[0])
+        self.update_capture_controls()
+
+    def update_capture_controls(self):
+        ready = bool(self.client_tree.selection()) and set(self.jobs) == {'capture'} and not self.cleanup_requested and not self.handshake_found
+        self.reconnect_button.configure(state='normal' if ready else 'disabled')
+        broadcast_ready = set(self.jobs) == {'capture'} and not self.cleanup_requested and not self.handshake_found
+        self.broadcast_button.configure(state='normal' if broadcast_ready else 'disabled')
 
     def capture(self):
         try:
@@ -271,17 +320,22 @@ class App(tk.Tk):
         except ValueError as exc:
             messagebox.showerror('Capture', str(exc))
 
-    def active(self, action):
+    def active(self, action, whole_network=False):
         try:
             data = self.target_data()
             if action in ('wps', 'pixie') and self.network_rows.get(data['bssid'], {}).get('wps_locked') is True:
                 raise ValueError('This router advertised a WPS lock. Rescan after it is unlocked.')
             data['seconds'] = 120 if action in ('wps', 'pixie') else 25
             if action == 'deauth':
-                data.update(station=mac(self.station.get()), count=number(self.count.get(), 1, 5))
+                data['count'] = number(self.count.get(), 1, 5)
+                if whole_network:
+                    data['whole_network'] = True
+                else:
+                    data['station'] = mac(self.station.get())
             if action == 'wps':
                 data['attempts'] = number(self.attempts.get(), 1, 100)
-            if messagebox.askokcancel('Confirm active test', f"Run {action} against {data['bssid']} on channel {data['channel']}?\nThis can interrupt clients or trigger a router WPS lockout."):
+            scope = 'ALL clients on this selected access point' if whole_network else 'the selected target'
+            if messagebox.askokcancel('Confirm active test', f"Run {action} against {data['bssid']} on channel {data['channel']}?\nScope: {scope}. This can interrupt clients or trigger a router WPS lockout."):
                 self.start(action, data)
         except ValueError as exc:
             messagebox.showerror('Test target', str(exc))
@@ -313,7 +367,13 @@ class App(tk.Tk):
         data = {**data, 'interface': name}
         if action == 'survey':
             self.update_networks([])
-        self.jobs[action] = {'process': None, 'cancel': False, 'data': data, 'cleanup': cleanup}
+        if action == 'capture':
+            self.handshake_found = False
+            self.update_clients([])
+            self.capture_notice.set(f"Scanning clients and waiting for handshake: {data['bssid']} · channel {data['channel']}")
+            self.tabs.select(self.target_capture_tab)
+        related_capture = action == 'deauth' and 'capture' in self.jobs
+        self.jobs[action] = {'process': None, 'cancel': False, 'data': data, 'cleanup': cleanup, 'related_capture': related_capture}
         self.update_wps_offer()
         self.adapter_box.configure(state='disabled')
         self.status.set('Running: ' + ', '.join(self.jobs))
@@ -405,6 +465,8 @@ class App(tk.Tk):
         self.update_wps_offer()
         # Table results survive reset; the next operation re-enters monitor mode.
         needs_reset = action in RADIO_ACTIONS or (action in CONFIG_ACTIONS and code != 0)
+        if action == 'deauth' and 'capture' in self.jobs and not self.handshake_found:
+            self.capture_notice.set('Deauth test finished. Still capturing and waiting for a handshake; reconnect the client normally if necessary.')
         if needs_reset and not self.jobs:
             self.request_cleanup()
         elif self.cleanup_requested or self.pending_close:
@@ -456,7 +518,19 @@ class App(tk.Tk):
                     elif event_type == 'session':
                         # Do not replace latest completed session until files are finalized.
                         self.write('Session: ' + event['path'])
+                    elif event_type == 'clients':
+                        self.update_clients(event['items'])
+                    elif event_type == 'handshake':
+                        self.handshake_found = True
+                        self.capture_notice.set('HANDSHAKE CAPTURED for ' + event['bssid'] + ' — finishing capture and restoring adapter. Save latest session when ready.')
+                        self.write('HANDSHAKE CAPTURED: ' + event['bssid'])
+                        self.update_capture_controls()
+                    elif event_type == 'capture_status':
+                        self.capture_notice.set(event['text'])
                     elif event_type == 'files':
+                        if action == 'deauth' and self.jobs.get(action, {}).get('related_capture'):
+                            self.write('Deauth test log retained separately; handshake capture remains selected for saving.')
+                            continue
                         paths = [Path(p) for p in event['paths']]
                         if paths:
                             self.last_session = paths[0].parent

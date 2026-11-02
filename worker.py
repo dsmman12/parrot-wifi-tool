@@ -18,7 +18,7 @@ import time
 
 # Under python -I, explicitly load only the installed root-owned code directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from core import clean, interfaces, mac, networks, number, test_command, WpsObserver, merge_wps
+from core import clean, interfaces, mac, networks, number, test_command, WpsObserver, merge_wps, clients, handshake_announced
 
 ROOT = Path('/var/lib/parrot-wifi-tool')
 STOP = threading.Event()
@@ -149,9 +149,24 @@ def listen():
     finally:
         STOP.set()
 
-def run_stream(args, seconds, session, stop_on_lock=False, on_tick=None):
+def run_stream(args, seconds, session, stop_on_lock=False, on_tick=None, on_line=None, terminal_width=None):
+    # Airodump truncates its status header to stdin's terminal width. Give only
+    # the capture child a wide pseudo-terminal; keep GUI cancellation on our pipe.
+    with contextlib.ExitStack() as resources:
+        input_fd = subprocess.DEVNULL
+        if terminal_width is not None:
+            import struct
+            import termios
+            master, slave = os.openpty()
+            resources.callback(os.close, master)
+            resources.callback(os.close, slave)
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, terminal_width, 0, 0))
+            input_fd = slave
+        return _run_stream(args, seconds, session, stop_on_lock, on_tick, on_line, input_fd)
+
+def _run_stream(args, seconds, session, stop_on_lock, on_tick, on_line, input_fd):
     emit('log', text='Running: ' + ' '.join(args))
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    p = subprocess.Popen(args, stdin=input_fd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          start_new_session=True, env=ENV, cwd=session)
     selector = selectors.DefaultSelector()
     selector.register(p.stdout, selectors.EVENT_READ)
@@ -176,12 +191,14 @@ def run_stream(args, seconds, session, stop_on_lock=False, on_tick=None):
                         continue
                     log.write(chunk.decode(errors='replace'))
                     log.flush()
-                    pending += chunk.replace(b'\r', b'\n')
+                    pending += re.sub(rb'\x1b\[[0-9;]*[HfABCD]', b'\n', chunk).replace(b'\r', b'\n')
                     while b'\n' in pending:
                         line, pending = pending.split(b'\n', 1)
                         text = clean(line.decode(errors='replace')).strip()
                         if text:
                             emit('log', text=text[:2000])
+                            if on_line:
+                                on_line(text)
                         if stop_on_lock and ('rate limiting' in text.lower() or 'wps locked' in text.lower()):
                             emit('log', text='Router reported WPS lock/rate limiting; stopping.')
                             interrupted = True
@@ -189,7 +206,10 @@ def run_stream(args, seconds, session, stop_on_lock=False, on_tick=None):
                 if p.poll() is not None and not selector.get_map():
                     break
             if pending:
-                emit('log', text=clean(pending.decode(errors='replace'))[:2000])
+                text = clean(pending.decode(errors='replace'))
+                emit('log', text=text[:2000])
+                if on_line:
+                    on_line(text)
     finally:
         selector.close()
         # Stop all descendants, including pixiewps, even if the parent exited.
@@ -339,6 +359,7 @@ def prepare_radio(name, info):
 def radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds, channel, bssid):
     session = None
     publish_survey = None
+    handshake_found = False
     threading.Thread(target=listen, daemon=True).start()
     try:
         if not prepare_radio(name, info):
@@ -354,7 +375,7 @@ def radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds
         if action == 'survey':
             args = ['airodump-ng', '--band', survey_bands(info), '--wps', '--beacons', '--write', str(session / 'survey'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
         elif action == 'capture':
-            args = ['airodump-ng', '--bssid', bssid, '--channel', channel, '--write', str(session / 'capture'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
+            args = ['airodump-ng', '--background', '0', '--update', '1', '--bssid', bssid, '--channel', channel, '--write', str(session / 'capture'), '--output-format', 'pcap,csv', '--write-interval', '1', name]
         elif action == 'wash':
             args = ['wash', '-i', name]
         elif action == 'injection':
@@ -373,8 +394,23 @@ def radio_operation(action, data, name, info, uid, gid, lock, cap_scope, seconds
             if csv_files:
                 items = merge_wps(networks(csv_files[0].read_text(errors='replace')), observations)
                 emit('networks', items=items)
+        def publish_capture():
+            csv_files = sorted(session.glob('*.csv'))
+            if csv_files:
+                emit('clients', items=clients(csv_files[0].read_text(errors='replace'), bssid))
+        def capture_line(text):
+            nonlocal handshake_found
+            if not handshake_found and handshake_announced(text, bssid):
+                handshake_found = True
+                (session / 'handshake.json').write_text(json.dumps({'bssid':bssid,'recognized_by':'airodump-ng'}))
+                emit('handshake', bssid=bssid)
+                STOP.set()
         run_stream(args, seconds, session, action in ('wps', 'pixie'),
-                   on_tick=publish_survey if action == 'survey' else None)
+                   on_tick=publish_survey if action == 'survey' else publish_capture if action == 'capture' else None,
+                   on_line=capture_line if action == 'capture' else None,
+                   terminal_width=160 if action == 'capture' else None)
+        if action == 'capture' and not handshake_found:
+            emit('capture_status', text='Capture ended without an Airodump-confirmed handshake. Captured files are still available.')
     finally:
         try:
             if action == 'capture':

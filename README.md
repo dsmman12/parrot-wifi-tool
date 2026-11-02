@@ -1,6 +1,6 @@
 # Parrot Wi-Fi Tool
 
-A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.3.2** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
+A lightweight Python/Tk desktop app for testing your own Wi-Fi networks on Parrot OS. Version **0.4.0** is an initial release: unit-tested and intended for hardware validation on Parrot. It has no AI/API dependency and does not need HexStrike or Ollama running.
 
 ## Install on Parrot
 
@@ -37,7 +37,10 @@ Start using `parrot-wifi-tool` (or its application-menu shortcut, which opens a 
 - A folder picker and session export, including packet captures, CSV and tool output.
 - Local handshake recognition using Aircrack-ng with one deliberately invalid one-character WPA entry (not a valid password guess). This checks the capture, not a password. Explicit handshake counts and acceptance of WPA/WPA2 authentication data (which may be a PMKID) are labeled separately. Inconclusive tool output is explicitly labeled.
 - Selected-AP injection test.
-- Directed deauthentication against a specified client, 1–5 bursts. This may run beside a capture of the same AP/channel on the selected card.
+- Targeted client scan and packet capture run together. The **Clients & handshake** tab shows stations associated with the selected AP.
+- Choose **Deauth selected client** or **Deauth all clients on selected AP**, with 1–5 bounded bursts and target confirmation. Capture keeps running while/after deauth.
+- Live Airodump handshake detection: its explicit status-header announcement for the selected BSSID stops capture, preserves files and restores the adapter. A scan timeout or manual stop without that announcement is labeled clearly. The wide child terminal prevents status-header truncation.
+- A deauth log finishing after a capture never replaces the handshake capture as the session selected for saving.
 - WPS discovery using Wash, a bounded PIN test (1–100 attempts, 120 seconds), and one-attempt Pixie Dust test (120 seconds). Reported WPS locks/rate limiting stop the test. No lock bypass is used.
 - Automatic restoration after scans, captures/tests, failures, Stop All, and normal app close. The saved MAC, mode, link state and known NetworkManager control setting are restored; capture files are retained.
 - Stop All closes control pipes so the privileged helper terminates its child process groups, including descendants, before restoring. Overlapping capture/deauth jobs wait until the last radio operation stops.
@@ -45,14 +48,16 @@ Start using `parrot-wifi-tool` (or its application-menu shortcut, which opens a 
 
 ## First use
 
-1. Plug in your USB Wi-Fi adapter and open the app. The first `wlx…` card is selected if present; always verify the dropdown.
-2. Open **Adapter controls → Enable monitor mode**. Authorize sudo in the launcher terminal if requested. Confirm that mode changes to `monitor` in the adapter header/log.
-3. Open **Survey & capture → Scan networks**. Select your network as rows arrive. This fills the AP BSSID and channel; WPS status updates during the scan. A router advertising WPS shows test options below the list. Finish/stop the scan before testing; a reported WPS lock disables the offered tests.
-4. Confirm you own or have permission to test that target. Choose a save folder, set the capture duration, and select **Start targeted capture**.
-5. Reconnect one of your own devices to the network. Stop capture, then **Save latest session**. **Check handshake file…** opens a file picker; select the `.cap` and keep the correct AP BSSID selected.
-6. A completed capture/test automatically restores its saved adapter state. **Stop All** also ends the scanning session and restores modified cards. **Restore adapter completely** remains available for an explicit reset. Wi-Fi may need to reconnect.
+1. Select your USB card, open **1 · Networks**, and click **Scan networks**.
+2. Select your router and confirm you own/have permission to test it.
+3. Click **Scan selected router / capture**. The app opens **2 · Clients & handshake**, enters monitor mode and locks to the selected AP/channel. Client discovery and capture run together.
+4. Select a discovered client and click **Deauth selected client**, or click **Deauth all clients on selected AP** for a bounded AP-wide burst. Confirm the active test. These actions are available while capture is running; deauth does not stop the capture.
+5. Wait for **HANDSHAKE CAPTURED**. Capture stops automatically when Airodump announces a handshake for your selected BSSID, then the adapter is restored. The default limit is 300 seconds; you can change it before starting. If nothing is captured, the timer/Stop still preserve the files and report that no handshake was confirmed.
+6. Click **Choose save folder…**, then **Save latest session**. The `.cap`, CSV, log, and handshake metadata are retained. **Check handshake file…** provides an additional offline Aircrack check.
 
-For an active test, select the correct target/channel and open **Active tests & WPS**. Directed deauth requires the client MAC; it does not broadcast against all nearby clients. The app asks for confirmation before each active test. Be aware that even a single aireplay-ng burst contains multiple frames.
+A deauth burst may not disconnect protected clients (for example, PMF-enabled devices). You can also reconnect your own client normally while the capture waits. AP-wide deauth is scoped to one selected BSSID/channel; a mesh with multiple APs is not treated as one broadcast target. A single burst contains multiple frames.
+
+WPS options remain under the network list and in **Active tests & WPS**. Stop All and normal closing restore modified cards, including after failed/cancelled operations.
 
 ## Files and privacy
 
